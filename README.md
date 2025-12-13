@@ -1,2 +1,2 @@
 # repsx
-an embeddable and portable Sony PlayStation emulator core
+``repsx`` is a Work-in-Progress embeddable and portable Sony PlayStation emulator core library
