@@ -361,13 +361,19 @@ void gp0_fillvram(struct psx_gpu* gpu) {
 	tl.x &= 0x3f0;
 	tl.y &= 0x1ff;
 	AS_UINT32(size) = gpu->cmd.buf[arg_idx++];
-	log_trace("GP0 FillVram: x=%u, y=%u, w=%u, h=%u", tl.x, tl.y, size.x, size.y);
+	size.x = ((size.x & 0x3ff) + 0xf) & 0xfff0;
+	size.y &= 0x1ff;
+	log_debug("GP0 FillVram: x=%u, y=%u, w=%u, h=%u", tl.x, tl.y, size.x, size.y);
 	gpu_render_rect(gpu, false,
 		       .rect.v = { .x = tl.x, .y = tl.y, .color = command.color },
-		       .rect.w = size.x, .rect.h = size.y);
+		       .rect.w = size.x, .rect.h = size.y, .rect.is_clear = true);
 }
 
 static void gp0_image_load_update(struct psx_gpu* gpu) {
+	if(gpu->cmd.words_left == 0 && ((gpu->blit_state.w * gpu->blit_state.h) & 1)) {
+		gpu->cmd.buf[GPU_CMD_DATA_IDX] &= 0xffff;
+	}
+
 	struct {
 		psx_gpu_color_t colors[2];
 	} data;
@@ -392,6 +398,7 @@ static void gp0_image_load_update(struct psx_gpu* gpu) {
 		gpu->blit_state.x = gpu->blit_state.start_x;
 		gpu->blit_state.y++;
 	}
+
 	if(gpu->cmd.words_left == 0) {
 		gpu->renderer.commit_vram(&gpu->renderer, gpu->blit_state.texels);
 		gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);

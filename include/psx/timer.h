@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 struct psx_ctr {
-	uint32_t value;
+	uint32_t base;
 	struct {
 		bool sync_enable: 1;
 		uint32_t sync_mode: 2;
@@ -32,9 +32,10 @@ struct psx_timer {
 	struct psx_ctr t[3];
 
 	struct {
-		bool paused: 1;
-		bool irq_triggered: 1;
-		uint8_t ctr: 6; // only needed for timer2
+		uint32_t rate;
+		bool irq_triggered;
+		bool count_to_target;
+		uint64_t start_ts, end_ts;
 	} tstatus[3];
 	struct psx_system* sys;
 };

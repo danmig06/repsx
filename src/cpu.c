@@ -221,23 +221,44 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 	cpu->next_pc += 4;
 #ifdef HOOK_KCALLS
 	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xa4) { 
-		if(cpu->regs.r[9] == 0x3c) {
-			char c = cpu->regs.r[4];
-			fputc(c, stderr);
-		}
+		switch(cpu->regs.r[9]) {
+		case 0x09:
+		case 0x3c:
+			fputc(cpu->regs.a0, stderr);
+			break;
+		case 0x3e:
+			if(!cpu->regs.a0) {
+				fputs("<NULL>", stderr);
+			}
 
-		if(cpu->regs.r[9] == 0xa1) {
+			char* str = (char*)&cpu->sys->memory->phys[PSX_MEM_REAL_ADDR(cpu->regs.a0)];
+			fprintf(stderr, "%s\r\n", str);
+			break;
+		case 0xa1:
 			log_fatal("SystemError('%c', %d)", cpu->regs.r[4], cpu->regs.r[5]);
 			exit(cpu->regs.r[5]);
+			break;
 		}
 	}
 
 	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xb4) { 
-		if(cpu->regs.r[9] == 0x3d) {
-			char c = cpu->regs.r[4];
-			fputc(c, stderr);
+		switch(cpu->regs.r[9]) {
+		case 0x3b:
+		case 0x3d:
+			fputc(cpu->regs.a0, stderr);
+			break;
+		case 0x3f:
+			if(!cpu->regs.a0) {
+				fputs("<NULL>", stderr);
+			}
+
+			char* str = (char*)&cpu->sys->memory->phys[PSX_MEM_REAL_ADDR(cpu->regs.a0)];
+			fprintf(stderr, "%s\r\n", str);
+			break;
+
 		}
 	}
+#endif
 
 	// jr $ra on a shell jump skips the intro and boots straight into the disc, 
 	// it can only be done once per reset, the kernel assumes the disc is inserted
@@ -249,9 +270,17 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 	}
 	*/
 
-	
-#endif
+	/*
+	if(cpu->regs.pc == 0x8004c710) {
+		__asm__ volatile ("int3");
+	}
+	*/
+
 	if(psx_cpu_check_irqs(cpu)) {
+		if((current_instruction & 0xfe000000) == 0x4a000000) {
+			gte_run_cmd(cpu, current_instruction);
+		}
+
 		enter_exception(cpu, PSX_CPU_EXCAUSE_INT);
 		return;
 	}

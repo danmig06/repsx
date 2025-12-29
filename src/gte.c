@@ -287,7 +287,6 @@ static uint8_t check_rgb(struct psx_cpu* cpu, int flag_idx, int32_t value) {
 	return value;
 }
 
-
 static uint32_t npw2(uint32_t n) {
 	--n;
 	n |= n >> 1;
@@ -378,8 +377,8 @@ static void avsz4(struct psx_cpu* cpu) {
 	OTZ = CHK_OTZ(avg >> 12);
 }
 
-// only MAC0 comes out wrong at the end sometimes, also one test reports wrong SXY2 results
-// amidog reports ~12000 successful tests before giving up
+// only MAC0 comes out wrong at the end sometimes, which will eventually cause wrong SXY2 results
+// amidog reports ~12000 successful tests before giving up, looks like it could be UNR division
 static void rtps(struct psx_cpu* cpu, int vi, bool finalize) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -416,8 +415,8 @@ static void rtps(struct psx_cpu* cpu, int vi, bool finalize) {
 
 	SXY_SHIFT();
 	int64_t in_mac0 = (I64((int16_t)DQA) * perspective_factor) + I64(DQB);
-	SX(2) = CHK_SX2(CHK_MAC0((I64(IR(1)) * perspective_factor) + I64((int32_t)OFX)) >> 16);
-	SY(2) = CHK_SY2(CHK_MAC0((I64(IR(2)) * perspective_factor) + I64((int32_t)OFY)) >> 16);
+	SX(2) = CHK_SX2(CHK_MAC0((I64((int16_t)IR(1)) * perspective_factor) + I64((int32_t)OFX)) >> 16);
+	SY(2) = CHK_SY2(CHK_MAC0((I64((int16_t)IR(2)) * perspective_factor) + I64((int32_t)OFY)) >> 16);
 
 	if(finalize) {
 		MAC(0) = CHK_MAC0(in_mac0);
@@ -439,7 +438,6 @@ static void sqr(struct psx_cpu* cpu) {
 	IR(3) = CHK_IR3(MAC(3));
 }
 
-// bad, has various errors on MACs and IRs, some hundred tests pass
 static void ncs(struct psx_cpu* cpu, int vi) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -448,16 +446,16 @@ static void ncs(struct psx_cpu* cpu, int vi) {
 	MAC(2) = SAT_MAC2((I64(L(2, 1)) * vx) + (I64(L(2, 2)) * vy) + (I64(L(2, 3)) * vz));
 	MAC(3) = SAT_MAC3((I64(L(3, 1)) * vx) + (I64(L(3, 2)) * vy) + (I64(L(3, 3)) * vz));
 	IR(1) = CHK_IR1(MAC(1));
-	IR(2) = CHK_IR1(MAC(2));
-	IR(3) = CHK_IR1(MAC(3));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 
 	int64_t in_ir1 = I64((int16_t)IR(1)), in_ir2 = I64((int16_t)IR(2)), in_ir3 = I64((int16_t)IR(3));
-	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2 + I64(LR(3)) * in_ir3));
-	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2 + I64(LG(3)) * in_ir3));
-	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2 + I64(LB(3)) * in_ir3));
+	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2) + I64(LR(3)) * in_ir3);
+	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2) + I64(LG(3)) * in_ir3);
+	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2) + I64(LB(3)) * in_ir3);
 	IR(1) = CHK_IR1(MAC(1));
-	IR(2) = CHK_IR1(MAC(2));
-	IR(3) = CHK_IR1(MAC(3));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 	RGB_SHIFT();
 	CODE(2) = CC;
 	R(2) = CHK_R(MAC(1) >> 4);
@@ -465,6 +463,7 @@ static void ncs(struct psx_cpu* cpu, int vi) {
 	B(2) = CHK_B(MAC(3) >> 4);
 }
 
+// has various errors on IRs, some hundred tests pass
 static void nccs(struct psx_cpu* cpu, int vi) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -473,16 +472,16 @@ static void nccs(struct psx_cpu* cpu, int vi) {
 	MAC(2) = SAT_MAC2((I64(L(2, 1)) * vx) + (I64(L(2, 2)) * vy) + (I64(L(2, 3)) * vz));
 	MAC(3) = SAT_MAC3((I64(L(3, 1)) * vx) + (I64(L(3, 2)) * vy) + (I64(L(3, 3)) * vz));
 	IR(1) = CHK_IR1(MAC(1));
-	IR(2) = CHK_IR1(MAC(2));
-	IR(3) = CHK_IR1(MAC(3));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 
 	int64_t in_ir1 = I64((int16_t)IR(1)), in_ir2 = I64((int16_t)IR(2)), in_ir3 = I64((int16_t)IR(3));
-	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2 + I64(LR(3)) * in_ir3));
-	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2 + I64(LG(3)) * in_ir3));
-	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2 + I64(LB(3)) * in_ir3));
+	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2) + I64(LR(3)) * in_ir3);
+	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2) + I64(LG(3)) * in_ir3);
+	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2) + I64(LB(3)) * in_ir3);
 	IR(1) = CHK_IR1(MAC(1));
-	IR(2) = CHK_IR1(MAC(2));
-	IR(3) = CHK_IR1(MAC(3));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 
 	MAC(1) = SAT_MAC1((RC * I64((int16_t)IR(1))) << 4); 
 	MAC(2) = SAT_MAC2((GC * I64((int16_t)IR(2))) << 4);
@@ -493,8 +492,12 @@ static void nccs(struct psx_cpu* cpu, int vi) {
 	R(2) = CHK_R(MAC(1) >> 4);
 	G(2) = CHK_G(MAC(2) >> 4);
 	B(2) = CHK_B(MAC(3) >> 4);
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 }
 
+// something wrong with the flags
 static void ncds(struct psx_cpu* cpu, int vi) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -503,26 +506,26 @@ static void ncds(struct psx_cpu* cpu, int vi) {
 	MAC(2) = SAT_MAC2((I64(L(2, 1)) * vx) + (I64(L(2, 2)) * vy) + (I64(L(2, 3)) * vz));
 	MAC(3) = SAT_MAC3((I64(L(3, 1)) * vx) + (I64(L(3, 2)) * vy) + (I64(L(3, 3)) * vz));
 	IR(1) = CHK_IR1(MAC(1));
-	IR(2) = CHK_IR1(MAC(2));
-	IR(3) = CHK_IR1(MAC(3));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 
 	int64_t in_ir1 = I64((int16_t)IR(1)), in_ir2 = I64((int16_t)IR(2)), in_ir3 = I64((int16_t)IR(3));
-	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2 + I64(LR(3)) * in_ir3));
-	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2 + I64(LG(3)) * in_ir3));
-	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2 + I64(LB(3)) * in_ir3));
+	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2) + I64(LR(3)) * in_ir3);
+	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2) + I64(LG(3)) * in_ir3);
+	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2) + I64(LB(3)) * in_ir3);
 	IR(1) = CHK_IR1(MAC(1));
-	IR(2) = CHK_IR1(MAC(2));
-	IR(3) = CHK_IR1(MAC(3));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
 
 	bool saved_lm = cpu->gte_cmd.lm;
 	cpu->gte_cmd.lm = false;
 	in_ir1 = CHK_IR1(SAT_MAC1(((I64((int32_t)RFC)) << 12) - (I64(RC << 4) * I64((int16_t)IR(1)))));
 	in_ir2 = CHK_IR2(SAT_MAC2(((I64((int32_t)GFC)) << 12) - (I64(GC << 4) * I64((int16_t)IR(2)))));
 	in_ir3 = CHK_IR3(SAT_MAC3(((I64((int32_t)BFC)) << 12) - (I64(BC << 4) * I64((int16_t)IR(3)))));
+	cpu->gte_cmd.lm = saved_lm;
 	MAC(1) = SAT_MAC1((I64(RC << 4) * I64((int16_t)IR(1))) + (I64((int16_t)IR(0)) * in_ir1));
 	MAC(2) = SAT_MAC2((I64(GC << 4) * I64((int16_t)IR(2))) + (I64((int16_t)IR(0)) * in_ir2));
 	MAC(3) = SAT_MAC3((I64(BC << 4) * I64((int16_t)IR(3))) + (I64((int16_t)IR(0)) * in_ir3));
-	cpu->gte_cmd.lm = saved_lm;
 	IR(1) = CHK_IR1(MAC(1));
 	IR(2) = CHK_IR2(MAC(2));
 	IR(3) = CHK_IR3(MAC(3));
@@ -574,10 +577,31 @@ static void dpcs(struct psx_cpu* cpu) {
 }
 
 static void intpl(struct psx_cpu* cpu) {
-	// TODO:
+	bool saved_lm = cpu->gte_cmd.lm;
+	cpu->gte_cmd.lm = false;
+	int64_t in_mac1 = SAT_MAC1((I64((int32_t)RFC) << 12) - (I64((int16_t)IR(1)) << 12));
+	int64_t in_mac2 = SAT_MAC2((I64((int32_t)GFC) << 12) - (I64((int16_t)IR(2)) << 12));
+	int64_t in_mac3 = SAT_MAC3((I64((int32_t)BFC) << 12) - (I64((int16_t)IR(3)) << 12));
+	int64_t in_ir1 = CHK_IR1(in_mac1);
+	int64_t in_ir2 = CHK_IR2(in_mac2);
+	int64_t in_ir3 = CHK_IR3(in_mac3);
+
+	cpu->gte_cmd.lm = saved_lm;
+	MAC(1) = SAT_MAC1((I64((int16_t)IR(1)) << 12) + (in_ir1 * I64((int16_t)IR(0))));
+	MAC(2) = SAT_MAC2((I64((int16_t)IR(2)) << 12) + (in_ir2 * I64((int16_t)IR(0))));
+	MAC(3) = SAT_MAC3((I64((int16_t)IR(3)) << 12) + (in_ir3 * I64((int16_t)IR(0))));
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+
+	RGB_SHIFT();
+	CODE(2) = CC;
+	R(2) = CHK_R(MAC(1) >> 4);
+	G(2) = CHK_G(MAC(2) >> 4);
+	B(2) = CHK_B(MAC(3) >> 4);
 }
 
-// horribly wrong for some reason, will also hang Crash Bandicoot (also happens when not handling MVMVA)
+// something wrong with the flags (apparently MAC1 has the correct value but shouldn't set the flag?)
 static void mvmva(struct psx_cpu* cpu) {
 	gte_log(stderr, "GTE: MVMVA(sf=%d, lm=%d, tx=%d, vx=%d, mx=%d) at 0x%08x\n", 
 			cpu->gte_cmd.sf, cpu->gte_cmd.lm, cpu->gte_cmd.translation_vec, 
@@ -629,10 +653,11 @@ static void mvmva(struct psx_cpu* cpu) {
 		vx = cpu->gte_regs.v[cpu->gte_cmd.mult_vec];
 	}
 
+	int64_t vxz = I64((int16_t)vx.z);
 	if(cpu->gte_cmd.translation_vec == 2) {
-		MAC(1) = SAT_MAC1(CHK_MAC1(I64(mx->_12) * I64(vx.y)) + I64(mx->_13) * I64((int16_t)vx.z));
-		MAC(2) = SAT_MAC2(CHK_MAC2(I64(mx->_22) * I64(vx.y)) + I64(mx->_23) * I64((int16_t)vx.z));
-		MAC(3) = SAT_MAC3(CHK_MAC3(I64(mx->_32) * I64(vx.y)) + I64(mx->_33) * I64((int16_t)vx.z));
+		MAC(1) = SAT_MAC1(CHK_MAC1(I64(mx->_12) * I64(vx.y)) + (I64(mx->_13) * vxz));
+		MAC(2) = SAT_MAC2(CHK_MAC2(I64(mx->_22) * I64(vx.y)) + (I64(mx->_23) * vxz));
+		MAC(3) = SAT_MAC3(CHK_MAC3(I64(mx->_32) * I64(vx.y)) + (I64(mx->_33) * vxz));
 		int64_t in_mac1 = SAT_MAC1((I64(txx) << 12) + (I64(mx->_11) * I64(vx.x)));
 		int64_t in_mac2 = SAT_MAC2((I64(txy) << 12) + (I64(mx->_21) * I64(vx.x)));
 		int64_t in_mac3 = SAT_MAC3((I64(txz) << 12) + (I64(mx->_31) * I64(vx.x)));
@@ -643,14 +668,29 @@ static void mvmva(struct psx_cpu* cpu) {
 		CHK_IR3(in_mac3);
 		cpu->gte_cmd.lm = saved_lm;
 	} else {
-		MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1((I64(txx) << 12) + (I64(mx->_11) * I64(vx.x))) + (I64(mx->_12) * I64(vx.y))) + (I64(mx->_13) * I64((int16_t)vx.z)));
-		MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2((I64(txy) << 12) + (I64(mx->_21) * I64(vx.x))) + (I64(mx->_22) * I64(vx.y))) + (I64(mx->_23) * I64((int16_t)vx.z)));
-		MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3((I64(txz) << 12) + (I64(mx->_31) * I64(vx.x))) + (I64(mx->_32) * I64(vx.y))) + (I64(mx->_33) * I64((int16_t)vx.z)));
+		MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1((I64(txx) << 12) + (I64(mx->_11) * I64(vx.x))) + (I64(mx->_12) * I64(vx.y))) + (I64(mx->_13) * vxz));
+		MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2((I64(txy) << 12) + (I64(mx->_21) * I64(vx.x))) + (I64(mx->_22) * I64(vx.y))) + (I64(mx->_23) * vxz));
+		MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3((I64(txz) << 12) + (I64(mx->_31) * I64(vx.x))) + (I64(mx->_32) * I64(vx.y))) + (I64(mx->_33) * vxz));
 	}
 
 	IR(1) = CHK_IR1(MAC(1));
 	IR(2) = CHK_IR2(MAC(2));
 	IR(3) = CHK_IR3(MAC(3));
+}
+
+void gpf(struct psx_cpu* cpu) {
+	MAC(1) = SAT_MAC1(I64((int16_t)IR(0)) * I64((int16_t)IR(1)));
+	MAC(2) = SAT_MAC2(I64((int16_t)IR(0)) * I64((int16_t)IR(2)));
+	MAC(3) = SAT_MAC3(I64((int16_t)IR(0)) * I64((int16_t)IR(3)));
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+
+	RGB_SHIFT();
+	CODE(2) = CC;
+	R(2) = CHK_R(MAC(1) >> 4);
+	G(2) = CHK_G(MAC(2) >> 4);
+	B(2) = CHK_B(MAC(3) >> 4);
 }
 
 static inline void rgb_wr_update(struct psx_cpu* cpu) {
@@ -747,10 +787,7 @@ void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
 		dpcs(cpu);
 		cpu->clocks = 17;
 		return;
-	case GTE_RC_INTPL:
-		name = "INTPL";
-		cpu->clocks = 8;
-		break;
+	case GTE_RC_INTPL: intpl(cpu); cpu->clocks = 8; return;
 	case GTE_RC_SQR: sqr(cpu); cpu->clocks = 5; return;
 	case GTE_RC_NCS: ncs(cpu, 0); cpu->clocks = 14; return;
 	case GTE_RC_NCT:
@@ -785,16 +822,13 @@ void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
 	case GTE_RC_AVSZ3: avsz3(cpu); cpu->clocks = 5; return;
 	case GTE_RC_AVSZ4: avsz4(cpu); cpu->clocks = 6; return;
 	case GTE_RC_OP: op(cpu); cpu->clocks = 6; return;
-	case GTE_RC_GPF:
-		name = "GPF";
-		cpu->clocks = 5;
-		break;
+	case GTE_RC_GPF: gpf(cpu); cpu->clocks = 5; return;
 	case GTE_RC_GPL:
 		name = "GPL";
 		cpu->clocks = 5;
 		break;
 	default:
-		break;
+		return;
 	}
 
 	fprintf(stderr, "GTE: unhandled %s(sf=%d, lm=%d, tx=%d, vx=%d, mx=%d)\n", 

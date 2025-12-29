@@ -52,8 +52,8 @@ bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 	sys->gpu->sys = sys;
 	psx_gpu_init(sys->gpu);
 
-	psx_tmr_init(sys->timer);
 	sys->timer->sys = sys;
+	psx_tmr_init(sys->timer);
 
 	psx_dmac_init(sys->dmac);
 	sys->dmac->sys = sys;
@@ -132,7 +132,7 @@ void psx_system_update_s(struct psx_system* sys) {
 		}
 	}
 
-	psx_tmr_tick(sys->timer, sys->cpu->clocks);
+	// psx_tmr_tick(sys->timer, sys->cpu->clocks);
 	psx_sched_update(sys->sched, sys->cpu->clocks);
 }
 

@@ -25,7 +25,6 @@ void psx_sched_add_ev(struct psx_sched* sched, struct psx_sev* ev) {
 	}
 
 	struct psx_sev* current = sched->ev_list->next;
-	ev->clocks_left = sched->clocks_elapsed + ev->eta;
 	while(1) {
 		if(ev->clocks_left < current->clocks_left) {
 			prev->next = ev;

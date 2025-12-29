@@ -77,7 +77,7 @@ uint8_t pad_recv(struct psx_pad* pad) {
 		return 0xff;
 	}
 
-	// log_debug("PAD: sent back 0x%02x", pad->resp.buf[pad->resp.off]);
+	log_trace("PAD: sent back 0x%02x", pad->resp.buf[pad->resp.off]);
 	return pad->resp.buf[pad->resp.off++];
 }
 

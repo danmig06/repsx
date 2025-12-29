@@ -145,10 +145,10 @@ void psx_cdr_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 		cdr_bank1_write(cdr, register_offset, val);
 		break;
 	case 2:
-		log_error("CDROM: bank2 write (0x%02x) <%s+0x%x>", val, reg->name, register_offset);
+		log_warn("CDROM: bank2 write (0x%02x) <%s+0x%x>", val, reg->name, register_offset);
 		break;
 	case 3:
-		log_error("CDROM: bank3 write (0x%02x) <%s+0x%x>", val, reg->name, register_offset);
+		log_warn("CDROM: bank3 write (0x%02x) <%s+0x%x>", val, reg->name, register_offset);
 		break;
 	default:
 		break;

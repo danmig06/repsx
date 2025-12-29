@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define HOOK_POST_CODES
+// #define HOOK_POST_CODES
 
 void psx_mem_init(struct psx_mem* memory) {
 	memory->phys = malloc(PSX_MEM_PHYS_SIZE);
@@ -38,7 +38,11 @@ static struct psx_region* get_mapped_region(struct psx_mem* memory, uint32_t add
 	}
 
 	if(!selected_region) {
-		panic("0x%08x: Out-of-bounds access at address %08x", memory->sys->cpu->regs.pc, addr);
+		struct psx_cpu* cpu = memory->sys->cpu;
+		panic("0x%08x: Out-of-bounds access at address 0x%08x\n\
+				ra=0x%08x, a0=0x%08x, a1=0x%08x, a2=0x%08x, a3=0x%08x", 
+				cpu->regs.pc, addr, cpu->regs.ra, 
+				cpu->regs.a0, cpu->regs.a1, cpu->regs.a2, cpu->regs.a3);
 	}
 
 	return selected_region;
@@ -71,11 +75,6 @@ uint8_t psx_mem_read8(struct psx_mem* memory, uint32_t addr) {
 
 void psx_mem_write8(struct psx_mem* memory, uint32_t addr, uint8_t val) {
 	struct psx_region* selected_region = get_mapped_region(memory, addr);
-#ifdef HOOK_POST_CODES
-	if(addr == 0x1f802041) {
-		fprintf(stderr, "PSX: POST %u\n", val);
-	}
-#endif
 	selected_region->write8(selected_region, addr, val);
 }
 
@@ -162,23 +161,25 @@ void psx_null_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 }
 
 uint16_t psx_null_read16(struct psx_region* reg, uint32_t addr) {
-	log_warn("Unhandled read16 at address 0x%08x <%s+0x%x>\n", addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
-	if(addr == 0x1f801daa) {
-		return 0xffef;
-	}
+	log_warn("Unhandled read16 at address 0x%08x <%s+0x%x>", addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
 	return 0;
 }
 
 void psx_null_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
-	log_warn("Unhandled write16 (0x%x) at address 0x%08x <%s+0x%x>\n", val, addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
+	log_warn("Unhandled write16 (0x%x) at address 0x%08x <%s+0x%x>", val, addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
 }
 
 uint8_t psx_null_read8(struct psx_region* reg, uint32_t addr) {
-	log_warn("Unhandled read8 at address 0x%08x <%s+0x%x>\n", addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
+	log_warn("Unhandled read8 at address 0x%08x <%s+0x%x>", addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
 	return 0;
 }
 
 void psx_null_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
-	log_warn("Unhandled write8 (0x%x) at address 0x%08x <%s+0x%x>\n", val, addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
+#ifdef HOOK_POST_CODES
+	if(addr == 0x1f802041) {
+		fprintf(stderr, "PSX: POST %u\n", val);
+	}
+#endif
+	log_warn("Unhandled write8 (0x%x) at address 0x%08x <%s+0x%x>", val, addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
 }
 

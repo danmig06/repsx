@@ -46,16 +46,15 @@ void psx_sio_reset(struct psx_sio* sio) {
 static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 	sio->regs.stat.rx_not_empty = true;
 	struct psx_pad* pad;
-	switch(device_id) {
-	case PSX_SIO_DEV_CONTROLLER:
-		log_trace("SIO0: selected device 0x%02x", device_id);
+	if(device_id == PSX_SIO_DEV_CONTROLLER) {
 		pad = sio->dev.pad[SIO0_PORT(sio)];
 		if(!pad) {
 			// pad[port] is not connected, the system will try to read the device ID 
 			// anyway and the response should just be HiZ
 			sio->regs.stat.dsr_input_level = false;
-			break;
+			return false;
 		}
+		log_trace("SIO0: selected device 0x%02x", device_id);
 		sio->tx_address = device_id;
 		sio->regs.stat.rx_not_empty = false;
 		
@@ -69,12 +68,12 @@ static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 			log_error("SIO0: cannot schedule selection IRQ");
 		}
 		return true;
-	case PSX_SIO_DEV_MEMCARD:
+	} else if(device_id >= PSX_SIO_DEV_MEMCARD) {
 		log_error("SIO0: memory cards are not implemented");
-		break;
-	case PSX_SIO_DEV_NONE:
+		sio->regs.stat.dsr_input_level = false;
+	} else {
 		log_error("SIO0: unsupported device selected");
-		break;
+		sio->regs.stat.dsr_input_level = false;
 	}
 	return false;
 }
@@ -87,6 +86,8 @@ static void unselect_device(struct psx_sio* sio) {
 	if(sio->dev.pad[1]) {
 		sio->dev.pad[1]->reset(sio->dev.pad[1]);
 	}
+	sio->regs.stat.tx_not_full = true;
+	sio->regs.stat.tx_idle = true;
 
 	sio->tx_address = PSX_SIO_DEV_NONE;
 }
@@ -141,6 +142,7 @@ static uint8_t rx_update(struct psx_sio* sio) {
 		break;
 	case PSX_SIO_DEV_NONE:
 	default:
+		// log_error("SIO0: read from no device");
 		break;
 	}
 
@@ -163,8 +165,24 @@ uint32_t psx_sio_read32(struct psx_region* reg, uint32_t addr) {
 
 	uint8_t* regs = reg->peripheral;
 	memcpy(&val, &regs[register_offset], sizeof(val));
+	if(register_offset == 4) {
+		sio->regs.stat.dsr_input_level = false;
+	}
 
 	return val;
+}
+
+static void handle_write(struct psx_sio* sio, uint32_t off) {
+	if(sio->regs.ctrl.acknowledge) {
+		sio->regs.stat.rx_pe = false;
+		sio->regs.stat.rx1_bsb = false;
+		sio->regs.stat.irq = false;
+		sio->regs.ctrl.acknowledge = false;
+	}
+
+	if(!sio->regs.ctrl.dtr_out_level && sio->tx_address != PSX_SIO_DEV_NONE) {
+		unselect_device(sio);
+	}
 }
 
 void psx_sio_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
@@ -181,17 +199,7 @@ void psx_sio_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 		if(!reg->peripheral) return;
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
-
-		if(sio->regs.ctrl.acknowledge) {
-			sio->regs.stat.rx_pe = false;
-			sio->regs.stat.rx1_bsb = false;
-			sio->regs.stat.irq = false;
-			sio->regs.ctrl.acknowledge = false;
-		}
-
-		if(!sio->regs.ctrl.dtr_out_level) {
-			unselect_device(sio);
-		}
+		handle_write(reg->peripheral, register_offset);
 	}
 }
 
@@ -211,6 +219,9 @@ uint16_t psx_sio_read16(struct psx_region* reg, uint32_t addr) {
 
 	uint8_t* regs = reg->peripheral;
 	memcpy(&val, &regs[register_offset], sizeof(val));
+	if(register_offset == 4) {
+		sio->regs.stat.dsr_input_level = false;
+	}
 
 	return val;
 }
@@ -229,17 +240,7 @@ void psx_sio_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 		if(!reg->peripheral) return;
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
-
-		if(sio->regs.ctrl.acknowledge) {
-			sio->regs.stat.rx_pe = false;
-			sio->regs.stat.rx1_bsb = false;
-			sio->regs.stat.irq = false;
-			sio->regs.ctrl.acknowledge = false;
-		}
-
-		if(!sio->regs.ctrl.dtr_out_level) {
-			unselect_device(sio);
-		}
+		handle_write(reg->peripheral, register_offset);
 	}
 }
 
@@ -258,6 +259,9 @@ uint8_t psx_sio_read8(struct psx_region* reg, uint32_t addr) {
 
 	uint8_t* regs = reg->peripheral;
 	val = regs[register_offset];
+	if(register_offset == 4) {
+		sio->regs.stat.dsr_input_level = false;
+	}
 
 	return val;
 }
@@ -275,18 +279,7 @@ void psx_sio_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	} else {
 		uint8_t* regs = reg->peripheral;
 		regs[register_offset] = val;
-
-		if(sio->regs.ctrl.acknowledge) {
-			printf("SIO0: interrupt acknowledged");
-			sio->regs.stat.rx_pe = false;
-			sio->regs.stat.rx1_bsb = false;
-			sio->regs.stat.irq = false;
-			sio->regs.ctrl.acknowledge = false;
-		}
-
-		if(!sio->regs.ctrl.dtr_out_level) {
-			unselect_device(sio);
-		}
+		handle_write(reg->peripheral, register_offset);
 	}
 }
 

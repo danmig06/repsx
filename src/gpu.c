@@ -63,7 +63,7 @@ static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 		gpu->gpustat.scanline_odd = false;
 	}
 
-	psx_tmr_hblank_end(sched->sys->timer, gpu->scanline_count == PSX_GPU_VISIBLE_SCANS_NTSC);
+	psx_tmr_hblank_end(sched->sys->timer, gpu->scanline_count == PSX_GPU_TOTAL_SCANS_NTSC);
 	gpu->scanline_count++;
 	psx_sched_add_ev(sched, &hblank_event);
 	psx_sched_remove_ev(sched, self->id);
@@ -77,6 +77,7 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 
 	psx_tmr_vblank(sched->sys->timer);	
 	psx_irq_raise(sched->sys->irq, PSX_IRQ_ID_VBLANK);
+	gpu->renderer.update(&gpu->renderer);
 	psx_sched_remove_ev(sched, self->id);
 	psx_sched_add_ev(sched, &vblank_event);
 }

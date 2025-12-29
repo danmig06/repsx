@@ -86,7 +86,7 @@ struct __psx_renderer_args {
 	struct {
 		psx_gpu_vert_t v;
 		uint32_t w, h;
-		bool flip_x, flip_y;
+		bool flip_x, flip_y, is_clear;
 	} rect;
 	struct {
 		bool quad;
@@ -120,6 +120,7 @@ struct psx_renderer {
 	void (*line)(struct psx_renderer*, int shading_mode, struct __psx_renderer_args*);
 	#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct __psx_renderer_args){ { 0 }, __VA_ARGS__ })
 
+	void (*update)(struct psx_renderer*);
 	void (*clip_update)(struct psx_renderer*, unsigned x1, unsigned y1, unsigned x2, unsigned y2);
 	void (*blit)(struct psx_renderer*, int sx, int sy, int dx, int dy, int w, int h);
 	uint16_t* (*get_vram)(struct psx_renderer*, int x, int y, int w, int h);

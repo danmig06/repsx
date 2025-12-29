@@ -16,6 +16,8 @@
 #define BCD_TO_BYTE(b) (uint8_t)((((b) & 0xf0) >> 4) * 10 + ((b) & 0x0f))
 #define BYTE_TO_BCD(b) ((((b) / 10) << 4) | ((b) % 10))
 #define ACK_TIMESTAMP (ack_ev.ev.eta)
+#define SECTOR_HDR_OFF 12
+#define IRQ_RETRY_RATE 50
 
 struct cdr_event {
 	struct psx_sev ev;
@@ -28,13 +30,15 @@ struct cdr_event {
 static struct cdr_event ack_ev = {
 	.ev.id = PSX_SEV_ID_CDROM_RESP1,
 	.ev.eta = CDROM_CMD_AVG_DELAY,
-	.ev.clocks_left = 0
+	.ev.clocks_left = 0,
+	.active = false
 };
 
 static struct cdr_event completion_ev = {
 	.ev.id = PSX_SEV_ID_CDROM_RESP2,
 	.ev.eta = CDROM_CMD_AVG_DELAY,
-	.ev.clocks_left = 0
+	.ev.clocks_left = 0,
+	.active = false
 };
 
 typedef struct sector_header {
@@ -87,10 +91,15 @@ static void def_ack_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	if(cdr->regs.irq_status.flags != 0) {
 		log_error("CDROM: acknowledge should've been delayed");
+		psx_sched_remove_ev(sched, _self->id);
+		_self->eta = IRQ_RETRY_RATE;
+		psx_sched_add_ev(sched, _self);
+		return;
 	}
 	queue_clear(cdr->resp_queue);
 	if(self->resp_size > 0) {
 		queue_push_buf(cdr->resp_queue, self->response, self->resp_size);
+		cdr->regs.ctrl.result_ready = true;
 		self->resp_size = 0;
 	}
 	cdr_raise_irq(cdr, self->ival);
@@ -104,10 +113,15 @@ static void def_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	if(cdr->regs.irq_status.flags != 0) {
 		log_error("CDROM: completion should've been delayed");
+		psx_sched_remove_ev(sched, _self->id);
+		_self->eta = IRQ_RETRY_RATE;
+		psx_sched_add_ev(sched, _self);
+		return;
 	}
 	queue_clear(cdr->resp_queue);
 	if(self->resp_size > 0) {
 		queue_push_buf(cdr->resp_queue, self->response, self->resp_size);
+		cdr->regs.ctrl.result_ready = true;
 		self->resp_size = 0;
 	}
 	cdr_raise_irq(cdr, self->ival);
@@ -238,6 +252,9 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 	case CMD_SETFILTER:
 		run_cmd(cdr, 2, CdlSetfilter);
 		break;
+	case CMD_GETLOCL:
+		run_cmd(cdr, 0, CdlGetlocL);
+		break;
 	case CMD_GETLOCP:
 		run_cmd(cdr, 0, CdlGetlocP);
 		break;
@@ -273,6 +290,7 @@ void CdlNop(struct psx_cdrom* cdr) {
 	cdr_schedule_ack_ev(cdr, 3);
 }
 
+// DOA spams this while waiting for CdControl to fail for some reason
 void CdlSetloc(struct psx_cdrom* cdr) {
 	uint8_t m = cdr_pop_param(cdr);
 	uint8_t s = cdr_pop_param(cdr);
@@ -290,9 +308,11 @@ void CdlSetloc(struct psx_cdrom* cdr) {
 static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct cdr_event* self = (struct cdr_event*)_self;
 	struct psx_cdrom* cdr = sched->sys->cdrom;
+	queue_clear(cdr->data_queue);
+
 	queue_clear(cdr->resp_queue);
 	queue_push(cdr->resp_queue, AS_UINT8(cdr->state));
-	queue_clear(cdr->data_queue);
+	cdr->regs.ctrl.result_ready = true;
 	uint32_t delay = cdr_get_read_delay(cdr);
 	if(cdr->seek.is_pending) {
 		cdr->loc = cdr->seek.loc;
@@ -307,21 +327,21 @@ static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	cdr->state.reading = true;
 	int sync_size = (cdr->disc_mode.sector_size) ? 12 : 24;
 	cdr->disc->read_sector(cdr->disc->host_data, cdr->loc++, cdr->data_queue->buf);
-	cdr->data_queue->read_off = sync_size;
-	cdr->data_queue->write_off = (cdr->disc_mode.sector_size) ? 0x924 : 0x800;
-	cdr->data_queue->write_off += cdr->data_queue->read_off;
-	sector_hdr_t* header = (void*)&cdr->data_queue->buf[12];
-	xa_hdr_t* subheader = (void*)&cdr->data_queue->buf[12 + sizeof(header)];
+
+	sector_hdr_t* header = (void*)&cdr->data_queue->buf[SECTOR_HDR_OFF];
+	xa_hdr_t* subheader = (void*)&cdr->data_queue->buf[SECTOR_HDR_OFF + sizeof(header)];
 	if(header->mode == 2 && cdr->disc_mode.xa_mode) {
 		if(subheader->submode.is_audio && subheader->submode.realtime) {
 			log_debug("CDROM: XA sector skipped at LBA %d", cdr->loc);
 			goto read_end;
 		}
 	}
-	log_debug("CDROM: read at LBA %d | mode=0x%02x submode=0x%02x", cdr->loc, header->mode, AS_UINT8(subheader->submode));
+
+	cdr->data_queue->read_off = sync_size;
+	cdr->data_queue->write_off = cdr->data_queue->read_off + (cdr->disc_mode.sector_size ? 0x924 : 0x800);
+	log_debug("CDROM: read at LBA %d | mode=0x%02x submode=0x%02x", cdr->loc - 1, header->mode, AS_UINT8(subheader->submode));
 	cdr->regs.ctrl.data_request = true;
 	cdr_raise_irq(cdr, self->ival);
-
 read_end:
 	psx_sched_remove_ev(sched, self->ev.id);
 	_self->eta = delay; 
@@ -350,7 +370,7 @@ static void spinup_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
 }
 
 void CdlMotorOn(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlMotorOn");
+	log_debug("CDROM: CdlMotorOn()");
 	if(cdr->state.motor_on) {
 		enq_error_stat(cdr, CDROM_ERR_PARAMETERS, cdr->state);
 		return;
@@ -364,22 +384,30 @@ static void stop_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	cdr->state.motor_on = false;
 	put_comp_response(&cdr->state, 1);
-	// cdr->loc = begin of current track;
+	// cdr->loc = beginning of current track;
 	cdr->loc = 0;
 	def_comp_evcb(sched, self);
 }
 
-void CdlStop(struct psx_cdrom* cdr) {
-	log_error("CDROM: CdlStop()");
+static void stop_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	struct psx_cdrom* cdr = sched->sys->cdrom;
+	def_ack_evcb(sched, self);
+	
+	uint32_t delay = cdr_get_stop_delay(cdr);
 	if(cdr->state.reading) {
 		log_debug("CDROM: Read command aborted via Stop");
 		cdr->state.reading = false;
-		cdr_remove_ev(cdr->sys->sched, &completion_ev);
+		cdr_remove_ev(sched, &completion_ev);
 	} // else if playing ... else return
 	
+	put_comp_response(&cdr->state, 1);
+	cdr_schedule_comp_ev(cdr, 2, .eta = delay, .trigger = stop_comp_evcb);
+}
+
+void CdlStop(struct psx_cdrom* cdr) {
+	log_error("CDROM: CdlStop()");
 	put_ack_response(&cdr->state, 1);
-	cdr_schedule_ack_ev(cdr, 3);
-	cdr_schedule_comp_ev(cdr, 2, .eta = cdr_get_stop_delay(cdr), .trigger = stop_comp_evcb);
+	cdr_schedule_ack_ev(cdr, 3, .trigger = stop_ack_evcb);
 }
 
 static void pause_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
@@ -403,14 +431,26 @@ void CdlPause(struct psx_cdrom* cdr) {
 	cdr_schedule_ack_ev(cdr, 3, .trigger = pause_ack_evcb);
 }
 
-static uint8_t dummy_date[] = { 0x94, 0x09, 0x19, 0xc0 };
+static void init_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	struct psx_cdrom* cdr = sched->sys->cdrom;
+	AS_UINT8(cdr->state) = 0;
+	cdr->state.motor_on = true;
+	AS_UINT8(cdr->disc_mode) = 0;
+	cdr->disc_mode.sector_size = true;
+	put_comp_response(&cdr->state, 1);
+	def_comp_evcb(sched, self);
+}
 
 void CdlInit(struct psx_cdrom* cdr) {
 	log_debug("CDROM: CdlInit()");
 	put_ack_response(&cdr->state, 1);
-	cdr_schedule_ack_ev(cdr, 3, .eta = CDROM_CMD_INIT_DELAY);
-	put_comp_response(&cdr->state, 1);
-	cdr_schedule_comp_ev(cdr, 2);
+	cdr_schedule_ack_ev(cdr, 3);
+	// ensure that all other commands are canceled
+	if(completion_ev.active) {
+		cdr_remove_ev(cdr->sys->sched, &completion_ev);
+	}
+
+	cdr_schedule_comp_ev(cdr, 2, .trigger = init_comp_evcb, .eta = ACK_TIMESTAMP + CDROM_CMD_INIT_DELAY);
 }
 
 void CdlDemute(struct psx_cdrom* cdr) {
@@ -470,6 +510,8 @@ void CdlSeekL(struct psx_cdrom* cdr) {
 	put_comp_response(&cdr->state, 1);
 	cdr_schedule_comp_ev(cdr, 2, .trigger = seek_comp_evcb, .eta = completion_delay);
 }
+
+static uint8_t dummy_date[] = { 0x94, 0x09, 0x19, 0xc0 };
 
 void CdlTest(struct psx_cdrom* cdr) {
 	log_debug("CDROM: CdlTest()");
@@ -538,6 +580,12 @@ void CdlGetID(struct psx_cdrom* cdr) {
 	cdr_schedule_comp_ev(cdr, (response.stat.id_error || response.flags.no_disc) ? 5 : 2);
 }
 
+void CdlGetlocL(struct psx_cdrom* cdr) {
+	log_debug("CDROM: CdlGetlocL()");
+	put_ack_response(&cdr->data_queue->buf[SECTOR_HDR_OFF], 8);
+	cdr_schedule_ack_ev(cdr, 3);
+}
+
 void CdlGetlocP(struct psx_cdrom* cdr) {
 	log_debug("CDROM: CdlGetlocP()");
 	uint8_t track = 1, index = 1;
@@ -546,7 +594,7 @@ void CdlGetlocP(struct psx_cdrom* cdr) {
 	uint8_t cf = BYTE_TO_BCD(cdr->loc % 75);
 	log_debug(" -> track=%02d, index=%02d @ track %02x:%02x:%02x | global %02x:%02x:%02x", track, index, cm, cs, cf, cm, cs, cf);
 	// TODO: make a getloc for the disc backend
-	uint8_t response[] = { AS_UINT8(cdr->state), track, index, cm, cs, cf, cm, cs, cf };
+	uint8_t response[] = { AS_UINT8(cdr->state), track, index, cm, cs, cf, cm, cs + 2, cf };
 	put_ack_response(response, sizeof(response));
 	cdr_schedule_ack_ev(cdr, 3);
 }

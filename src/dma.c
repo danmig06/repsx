@@ -45,16 +45,19 @@ uint32_t psx_dmac_read32(struct psx_region* reg, uint32_t addr) {
 	return val;
 }
 
+static void write_dmairq(struct psx_dmac* dmac, uint32_t val) {
+	uint8_t updated_flags = dmac->regs.dmairq.chn_irq & ~(val >> 24);
+	val &= DMAIRQ_WRITE_MASK;
+	AS_UINT32(dmac->regs.dmairq) = (AS_UINT32(dmac->regs.dmairq) & ~(DMAIRQ_WRITE_MASK)) | val;
+	dmac->regs.dmairq.chn_irq = updated_flags;
+	dmac->regs.dmairq.master_irq = dmac->regs.dmairq.master_irq_enable && (dmac->regs.dmairq.chn_irq & dmac->regs.dmairq.chn_irq_mask) != 0;
+}
+
 void psx_dmac_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 	uint32_t register_offset = addr - reg->start;
 	
 	if(register_offset == 0x74) {
-		struct psx_dmac* dmac = reg->peripheral;
-		uint8_t updated_flags = dmac->regs.dmairq.chn_irq & ~(val >> 24);
-		val &= DMAIRQ_WRITE_MASK;
-		AS_UINT32(dmac->regs.dmairq) = (AS_UINT32(dmac->regs.dmairq) & ~(DMAIRQ_WRITE_MASK)) | val;
-		dmac->regs.dmairq.chn_irq = updated_flags;
-		dmac->regs.dmairq.master_irq = dmac->regs.dmairq.master_irq_enable && (dmac->regs.dmairq.chn_irq & dmac->regs.dmairq.chn_irq_mask) != 0;
+		write_dmairq(reg->peripheral, val);
 	} else {
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
@@ -78,8 +81,17 @@ uint16_t psx_dmac_read16(struct psx_region* reg, uint32_t addr) {
 void psx_dmac_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 	uint32_t register_offset = addr - reg->start;
 
-	uint8_t* regs = reg->peripheral;
-	memcpy(&regs[register_offset], &val, sizeof(val));
+	if(register_offset >= 0x74 && 0x78 > register_offset) {
+		int shift = register_offset - 0x74;
+		write_dmairq(reg->peripheral, ((uint32_t)val) << (shift * 8));
+	} else {
+		uint8_t* regs = reg->peripheral;
+		memcpy(&regs[register_offset], &val, sizeof(val));
+
+		if(((register_offset >> 2) & 3) == 2) {
+			psx_dmac_run_transfers(reg->peripheral);
+		}
+	}
 
 	/*
 	struct psx_dmac* dmac = reg->peripheral;
@@ -100,9 +112,17 @@ uint8_t psx_dmac_read8(struct psx_region* reg, uint32_t addr) {
 
 void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	uint32_t register_offset = addr - reg->start;
-	uint8_t* regs = reg->peripheral;
-	regs[register_offset] = val;
+	if(register_offset >= 0x74 && 0x78 > register_offset) {
+		int shift = register_offset - 0x74;
+		write_dmairq(reg->peripheral, ((uint32_t)val) << (shift * 8));
+	} else {
+		uint8_t* regs = reg->peripheral;
+		regs[register_offset] = val;
 
+		if(((register_offset >> 2) & 3) == 2) {
+			psx_dmac_run_transfers(reg->peripheral);
+		}
+	}
 	/*
 	struct psx_dmac* dmac = reg->peripheral;
 	if(register_offset == 0x77) {
@@ -237,8 +257,9 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	uint32_t list_header;
 	uint32_t item;
 	uint8_t items_left;
+	uint32_t limit = 16384;
 
-	while(1) {
+	while(limit--) {
 		list_header = psx_mem_read32(dmac->sys->memory, addr);
 		items_left = list_header >> 24;
 

@@ -104,7 +104,7 @@ void enter_exception(struct psx_cpu* cpu, uint32_t cause) {
 
 void ill(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("ill");
-	log_fatal("illegal opcode 0x%08x at 0x%08x\n", insn, cpu->regs.pc);
+	log_fatal("illegal opcode 0x%08x at 0x%08x", insn, cpu->regs.pc);
 	enter_exception(cpu, PSX_CPU_EXCAUSE_ILLEGAL);
 }
 

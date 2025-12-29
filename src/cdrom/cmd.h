@@ -33,6 +33,7 @@ enum {
 	CMD_DEMUTE    = 0x0c,
 	CMD_SETFILTER = 0x0d,
 	CMD_SETMODE   = 0x0e,
+	CMD_GETLOCL   = 0x10,
 	CMD_GETLOCP   = 0x11,
 	CMD_GETTN     = 0x13,
 	CMD_GETTD     = 0x14,
