@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <string.h>
+#define GPU_VER 1
 
 typedef struct gp0_color {
 	uint8_t r;
@@ -105,6 +106,8 @@ void gp0_poly(struct psx_gpu* gpu) {
 		log_trace("texdata u=%u, v=%u, clut:(x=%u, y=%u)", tex_data[0].u, tex_data[0].v, clut.x, clut.y);
 	}
 
+	int min_x = v[0].x, max_x = v[0].x;
+	int min_y = v[0].y, max_y = v[0].y;
 	bool need_texpage = true;
 	for(int i = 0; i < ((poly.is_quad) ? 3 : 2); i++) {
 		if(poly.is_gouraud_shaded) {
@@ -115,7 +118,11 @@ void gp0_poly(struct psx_gpu* gpu) {
 		}
 		AS_UINT32(v[i + 1]) = gpu->cmd.buf[arg_idx++];
 		v[i + 1].x += gpu->draw_off.x;
+		if(v[i + 1].x > max_x) max_x = v[i + 1].x;
+		if(v[i + 1].x < min_x) min_x = v[i + 1].x;
 		v[i + 1].y += gpu->draw_off.y;
+		if(v[i + 1].y > max_y) max_y = v[i + 1].y;
+		if(v[i + 1].y < min_y) min_y = v[i + 1].y;
 		log_trace("vertex x=%hd, y=%hd", v[i + 1].x, v[i + 1].y);
 		if(poly.is_textured) {
 			AS_UINT32(tex_data[i + 1]) = gpu->cmd.buf[arg_idx++];
@@ -127,6 +134,9 @@ void gp0_poly(struct psx_gpu* gpu) {
 				log_trace("texdata u=%u, v=%u, info=0x%04x", tex_data[i + 1].u, tex_data[i + 1].v, tex_data[i + 1].info);
 			}
 		}
+	}
+	if((max_x - min_x) > 0x3ff || (max_y - min_y) > 0x1ff) {
+		return;
 	}
 
 	int shading_mode = PSX_RENDERER_SH_FLAT;
@@ -177,7 +187,7 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 	switch(*state) {
 	case GPU_CMD_POLYLINE_C0:
 		if((word & 0xf000f000) == 0x50005000) {
-			log_trace("polyline end");
+			log_trace("gouraud shaded polyline end");
 			gpu->cmd.receiving_data = false;
 			return;
 		}
@@ -186,7 +196,7 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 		break;
 	case GPU_CMD_POLYLINE_V0:
 		if(!line.is_gouraud_shaded && (word & 0xf000f000) == 0x50005000) {
-			log_trace("polyline end");
+			log_trace("flat polyline end");
 			gpu->cmd.receiving_data = false;
 			return;
 		}
@@ -203,9 +213,9 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 		break;
 	case GPU_CMD_POLYLINE_V1:
 		if(line.is_gouraud_shaded) {
-			AS_UINT32(c[0]) = (line.is_gouraud_shaded) ? gpu->cmd.buf[GPU_CMD_POLYLINE_C0] : line.color0;
+			AS_UINT32(c[0]) = gpu->cmd.buf[GPU_CMD_POLYLINE_C0];
 			log_trace("color r=%u, g=%u, b=%u", c[0].r, c[0].g, c[0].b);
-			AS_UINT32(c[1]) = (line.is_gouraud_shaded) ? gpu->cmd.buf[GPU_CMD_POLYLINE_C1] : line.color0;
+			AS_UINT32(c[1]) = gpu->cmd.buf[GPU_CMD_POLYLINE_C1];
 			log_trace("color r=%u, g=%u, b=%u", c[1].r, c[1].g, c[1].b);
 			*state = GPU_CMD_POLYLINE_C0;
 		} else {
@@ -232,6 +242,7 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 		return;
 	}
 
+	// line data is not done yet, since we didn't get a terminator, returning early causes the vertex sequence to end
 	gpu->cmd.words_left = true;
 }
 
@@ -276,7 +287,7 @@ void gp0_line(struct psx_gpu* gpu) {
 		gpu->cmd.receiving_data = true;
 		gpu->cmd.words_left = true;
 		gpu->cmd.update = gp0_polyline_update;
-		gpu->cmd.buf[GPU_CMD_POLYLINE_STATE] = GPU_CMD_POLYLINE_V0;
+		gpu->cmd.buf[GPU_CMD_POLYLINE_STATE] = (line.is_gouraud_shaded) ? GPU_CMD_POLYLINE_C0 : GPU_CMD_POLYLINE_V0;
 	}
 	if(!gpu->renderer.line) {
 		return;
@@ -363,7 +374,7 @@ void gp0_fillvram(struct psx_gpu* gpu) {
 	AS_UINT32(size) = gpu->cmd.buf[arg_idx++];
 	size.x = ((size.x & 0x3ff) + 0xf) & 0xfff0;
 	size.y &= 0x1ff;
-	log_debug("GP0 FillVram: x=%u, y=%u, w=%u, h=%u", tl.x, tl.y, size.x, size.y);
+	log_trace("GP0 FillVram: x=%u, y=%u, w=%u, h=%u", tl.x, tl.y, size.x, size.y);
 	gpu_render_rect(gpu, false,
 		       .rect.v = { .x = tl.x, .y = tl.y, .color = command.color },
 		       .rect.w = size.x, .rect.h = size.y, .rect.is_clear = true);
@@ -675,16 +686,12 @@ void gp1_set_display_disable(struct psx_gpu* gpu, uint32_t cmd) {
 }
 
 void gp1_read_register(struct psx_gpu* gpu, uint32_t cmd) {
-	uint32_t index = cmd & 0x00ffffff;
+	uint32_t index = cmd & 7;
 
 	switch(index) {
-	case 0:
-	case 1:
-	case 6:
-		break;
 	case 2:
-		// TODO: no texture window
-		gpu->gpuread = 0;
+		gpu->gpuread = gpu->tex_window.mask_x | (gpu->tex_window.mask_y << 5);
+		gpu->gpuread |= (gpu->tex_window.off_x << 10) | (gpu->tex_window.off_y << 15);
 		break;
 	case 3:
 		gpu->gpuread = gpu->draw_area.x1 | (gpu->draw_area.y1 << 10);
@@ -696,12 +703,9 @@ void gp1_read_register(struct psx_gpu* gpu, uint32_t cmd) {
 		gpu->gpuread = gpu->draw_off.x | (gpu->draw_off.y << 11);
 		break;
 	case 7:
-		gpu->gpuread = 1;
+		gpu->gpuread = GPU_VER;
 		break;
-	case 8:
-		gpu->gpuread = 0;
-		break;
-	default:
+	default: // handles 0, 1, 6
 		break;
 	}
 }

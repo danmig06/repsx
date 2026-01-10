@@ -37,6 +37,11 @@ typedef struct psx_btnstate {
 } psx_btnstate_t;
 typedef psx_btnstate_t (*psx_padpollfn_t)(void*, int);
 
+// TODO: move these elsewhere, make a public memcard API, maybe with filesystem parsing
+#define PSX_BU_SECTOR_SIZE 128
+typedef void (*psx_buwritefn_t)(void*, uint32_t addr, const uint8_t* buf);
+typedef void (*psx_bureadfn_t)(void*, uint32_t addr, uint8_t* buf);
+
 struct psx_system {
 	struct psx_cpu* cpu;
 	struct psx_mem* memory;
@@ -57,14 +62,15 @@ void psx_set_log_level(int level);
 
 bool psx_system_init(struct psx_system* sys, const char* bios_path);
 void psx_system_add_pad(struct psx_system* sys, int port, void* host_data, psx_padpollfn_t pollfn);
+void psx_system_remove_pad(struct psx_system* sys, int port);
+void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn);
+void psx_system_remove_mcd(struct psx_system* sys, int port);
 
 void psx_system_set_tray_open(struct psx_system* sys, bool opened);
 void psx_system_insert_disc(struct psx_system* sys, struct psx_disc* disc);
 void psx_system_eject_disc(struct psx_system* sys);
 
-void psx_system_remove_pad(struct psx_system* sys, int port);
 void psx_system_update(struct psx_system* sys);
-void psx_system_update_s(struct psx_system* sys);
 void psx_system_start(struct psx_system* sys);
 
 #endif // #ifndef PSX_SYSTEM_H

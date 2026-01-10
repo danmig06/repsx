@@ -61,11 +61,13 @@ struct psx_cdrom {
 	struct queue* resp_queue;
 	struct queue* param_queue;
 	uint32_t loc;
+	uint32_t read_loc;
 	struct {
 		uint32_t loc: 31;
 		bool is_pending: 1;
 	} seek;
 	bool muted;
+	bool report_absolute;
 
 	struct psx_disc* disc;
 	struct psx_system* sys;

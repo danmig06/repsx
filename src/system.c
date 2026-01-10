@@ -1,6 +1,7 @@
 #include <psx.h>
 
 #include "pad.h"
+#include "backupunit.h"
 #include "log.h"
 
 #include <stdbool.h>
@@ -8,6 +9,7 @@
 struct psx_spu g_dummy_spu;
 
 void psx_set_log_level(int level) {
+	log_set_quiet(false);
 	switch(level) {
 	case PSX_LOG_LEVEL_TRACE:
 		log_set_level(LOG_TRACE);
@@ -87,6 +89,15 @@ void psx_system_remove_pad(struct psx_system* sys, int port) {
 	sys->sio->dev.pad[port] = NULL;
 }
 
+void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
+	sys->sio->dev.bu[port] = bu_connect(port, host_data, write_fn, read_fn);
+}
+
+void psx_system_remove_mcd(struct psx_system* sys, int port) {
+	memset(sys->sio->dev.bu[port], 0, sizeof(*sys->sio->dev.bu[port]));
+	sys->sio->dev.bu[port] = NULL;
+}
+
 void psx_system_set_tray_open(struct psx_system* sys, bool opened) {
 	sys->cdrom->state.shell_open = opened;
 }
@@ -102,19 +113,6 @@ void psx_system_eject_disc(struct psx_system* sys) {
 }
 
 void psx_system_update(struct psx_system* sys) {
-	psx_cpu_fetch_execute(sys->cpu);
-	if(sys->current_exe) {
-		if(sys->cpu->next_pc == 0x80030000) {
-			fprintf(stderr, "exe loaded\n");
-			psx_exe_load(sys->current_exe, sys);
-		}
-	}
-
-	// psx_dmac_update(sys->dmac);
-	psx_gpu_update(sys->gpu, sys->cpu->clocks);
-}
-
-void psx_system_update_s(struct psx_system* sys) {
 	psx_cpu_fetch_execute(sys->cpu);
 
 	/*
@@ -132,7 +130,6 @@ void psx_system_update_s(struct psx_system* sys) {
 		}
 	}
 
-	// psx_tmr_tick(sys->timer, sys->cpu->clocks);
 	psx_sched_update(sys->sched, sys->cpu->clocks);
 }
 

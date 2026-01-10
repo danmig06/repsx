@@ -92,16 +92,6 @@ void psx_dmac_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 			psx_dmac_run_transfers(reg->peripheral);
 		}
 	}
-
-	/*
-	struct psx_dmac* dmac = reg->peripheral;
-	if(register_offset == 0x76) {
-		if(dmac->regs.dmairq.master_irq) {
-			dmac->regs.dmairq.chn_irq = 0;
-			dmac->regs.dmairq.master_irq = false;
-		}
-	}
-	*/
 }
 
 uint8_t psx_dmac_read8(struct psx_region* reg, uint32_t addr) {
@@ -123,15 +113,6 @@ void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 			psx_dmac_run_transfers(reg->peripheral);
 		}
 	}
-	/*
-	struct psx_dmac* dmac = reg->peripheral;
-	if(register_offset == 0x77) {
-		if(dmac->regs.dmairq.master_irq) {
-			dmac->regs.dmairq.chn_irq = 0;
-			dmac->regs.dmairq.master_irq = false;
-		}
-	}
-	*/
 }
 
 uint32_t transfer_size(psx_dma_channel_t chn) {
@@ -377,7 +358,7 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	if(dmac->regs.dmairq.master_irq_enable && DMACHN_ENABLED(dmac, channel) && !DMACHN_IRQ(dmac, channel)) {
 		dmac->regs.dmairq.master_irq = true;
 		dmac->regs.dmairq.chn_irq |= 1 << channel;
-		// log_trace(stderr, "DMA IRQ raised\n");
+		// log_trace(stderr, "DMA IRQ raised");
 		psx_irq_raise(dmac->sys->irq, PSX_IRQ_ID_DMA);
 	}
 }
@@ -392,42 +373,4 @@ void psx_dmac_run_transfers(struct psx_dmac* dmac) {
 		}
 	}
 }
-
-// used for (slow) non-scheduled execution
-/*
-void psx_dmac_update(struct psx_dmac* dmac) {
-	uint8_t cirq_enabled, flag;
-	if(dmac->gpu_irq_delay) {
-		dmac->gpu_irq_delay--;
-		flag = 1 << DMACHN_GPU;
-		cirq_enabled = dmac->regs.dmairq.chn_irq_enable;
-
-		if((cirq_enabled & flag) && !dmac->gpu_irq_delay) {
-			dmac->regs.dmairq.chn_irq |= flag;
-		}
-	}
-	if(dmac->otc_irq_delay) {
-		dmac->otc_irq_delay = 0;
-		flag = 1 << DMACHN_OTC;
-		cirq_enabled = dmac->regs.dmairq.chn_irq_enable;
-
-		if(cirq_enabled & flag) {
-			dmac->regs.dmairq.chn_irq |= flag;
-		}
-	}
-
-	// TODO: bus error is not considered for now, it's never set
-	bool prev_master_irq = dmac->regs.dmairq.master_irq && dmac->regs.dmairq.master_irq_enable;
-	int enabled_flags = dmac->regs.dmairq.chn_irq_mask;
-	bool interrupt_en = dmac->regs.dmairq.master_irq_enable;
-	int completion_flags = dmac->regs.dmairq.chn_irq;
-
-	bool irq = interrupt_en && ((completion_flags & enabled_flags) != 0);
-
-	dmac->regs.dmairq.master_irq = irq;
-	if(!prev_master_irq && irq) {
-		psx_irq_raise(dmac->sys->irq, PSX_IRQ_ID_DMA);
-	}
-}
-*/
 

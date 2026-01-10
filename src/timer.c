@@ -14,9 +14,6 @@
 		} \
 	} while(0)
 
-// TODO: timer rate is slightly inaccurate for almost everything, 
-// some of these issues may be causing SMT to hang and many other games to drop inputs
-
 struct timer_ev {
 	struct psx_sev ev;
 	bool is_active;
@@ -165,7 +162,7 @@ static void tmr_update(struct psx_timer* tmr) {
 	CHECK_TARGET(tmr, 2, ts);
 }
 
-void psx_tmr_hblank(struct psx_timer* tmr) {
+void psx_tmr_hsync(struct psx_timer* tmr) {
 	if(!tmr->t[0].mode.sync_enable) {
 		return;
 	}
@@ -183,40 +180,7 @@ void psx_tmr_hblank(struct psx_timer* tmr) {
 	}
 }
 
-void psx_tmr_hblank_end(struct psx_timer* tmr, bool vblank_end) {
-	(void)tmr;
-	(void)vblank_end;
-	/*
-	if(vblank_end && tmr->t[1].mode.sync_enable) {
-		switch(tmr->t[1].mode.sync_mode) {
-		case 0:
-			tmr->tstatus[1].paused = false;
-			break;
-		case 2:
-			tmr->tstatus[1].paused = true;
-			break;
-		default:
-			break;
-		}	
-	}
-
-	if(!tmr->t[0].mode.sync_enable) {
-		return;
-	}
-	switch(tmr->t[0].mode.sync_mode) {
-	case 0:
-		tmr->tstatus[0].paused = false;
-		break;
-	case 2:
-		tmr->tstatus[0].paused = true;
-		break;
-	default:
-		break;
-	}
-	*/
-}
-
-void psx_tmr_vblank(struct psx_timer* tmr) {
+void psx_tmr_vsync(struct psx_timer* tmr) {
 	if(!tmr->t[1].mode.sync_enable) {
 		return;
 	}
@@ -314,12 +278,12 @@ static void tmr_write(struct psx_timer* tmr, uint32_t off, uint32_t val) {
 	switch(off & 0xf) {
 	case 0:
 		// printf("timer%d write value -> 0x%08x\n", off >> 4, val);
-	 	setcount(tmr, idx, val & 0xffff);
+		tmr->t[idx].base = val & 0xffff;
+		setcount(tmr, idx, tmr->t[idx].base);
 		break;
 	case 4:
 		// printf("timer%d write mode -> 0x%08x\n", off >> 4, val);
 		AS_UINT32(tmr->t[idx].mode) = (AS_UINT32(tmr->t[idx].mode) & 0xffffc00) | (val & 0x3ff);
-		tmr->t[idx].base = val;
 		update_mode(tmr, idx);
 		break;
 	case 8:

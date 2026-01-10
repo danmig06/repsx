@@ -15,6 +15,7 @@ struct psx_pad {
 	bool config_mode;
 	bool analog_mode;
 	bool session_active;
+	bool processing_command;
 	struct {
 		void* data;
 		psx_padpollfn_t poll;

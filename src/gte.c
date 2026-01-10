@@ -113,10 +113,11 @@
 
 #define SF cpu->gte_cmd.sf
 #define LM cpu->gte_cmd.lm
-#if 1
-#define gte_log(...) 
-#else
+#define GTE_DEBUG 0
+#if GTE_DEBUG
 #define gte_log(...) fprintf(__VA_ARGS__)
+#else
+#define gte_log(...) 
 #endif
 
 enum {
@@ -269,8 +270,7 @@ static int32_t check_ir0(struct psx_cpu* cpu, int32_t value) {
 #define CHK_G(expr) check_rgb(cpu, 1, expr)
 #define CHK_B(expr) check_rgb(cpu, 2, expr)
 static uint8_t check_rgb(struct psx_cpu* cpu, int flag_idx, int32_t value) {
-	char flag_name[] = { 'R', 'G', 'B' };
-	gte_log(stderr, "checking %c input: 0x%08x ", flag_name[flag_idx], value);
+	gte_log(stderr, "checking %c input: 0x%08x ", "RGB"[flag_idx], value);
 	if (value < 0) {
 		FLAG |= GF_R_SAT >> flag_idx;
 		gte_log(stderr, "(negative overflow)");
@@ -286,6 +286,9 @@ static uint8_t check_rgb(struct psx_cpu* cpu, int flag_idx, int32_t value) {
 	gte_log(stderr, "\n-> 0x%02x\n", value);
 	return value;
 }
+
+#define PORTABLE_LZC 0
+#if PORTABLE_LZC
 
 static uint32_t npw2(uint32_t n) {
 	--n;
@@ -307,32 +310,27 @@ static int tzc(uint32_t n) {
 	return 32 - bcnt((~n) ^ (n | ((n & -n) - 1)));
 }
 
+// broken
 static inline int lzc(uint32_t n) {
 	return 32 - tzc(npw2(n + !(n & 1)));
 }
 
-#define PORTABLE_LZC 0
+#else
+
+static inline int lzc(uint32_t n) {
+	return __builtin_clz((n & 0x80000000) ? ~n : n);
+}
+
+#endif
+
 static inline void update_lzcr(struct psx_cpu* cpu) {
-#if PORTABLE_LZC
 	if(LZCS == -1 || !LZCS) {
 		LZCR = 32;
 
 		return;
 	}
 
-	int32_t val = (LZCS & 0x80000000) ? ~LZCS : LZCS;
-	LZCR = lzc(val);
-#else
-	if((LZCS == -1) || !LZCS) {
-		LZCR = 32;
-
-		return;
-	}
-
-	int b = (LZCS >> 31) & 1;
-
-	LZCR = __builtin_clz(b ? ~LZCS : LZCS);
-#endif
+	LZCR = lzc(LZCS);
 }
 
 static uint8_t g_unr_table[] = {
@@ -355,15 +353,40 @@ static uint8_t g_unr_table[] = {
     0x00
 };
 
-static uint32_t unr_divide(struct psx_cpu* cpu, uint32_t n, uint32_t d) {
+static inline uint32_t unr_divide(struct psx_cpu* cpu, uint64_t n, uint64_t d) {
+	if(n >= d * 2) {
+		cpu->gte_regs.flag.div_ovf = true;
+		return 0x1ffff;
+	}
+
 	int z = lzc(d) - 16;
-	uint64_t nl = n << z;
+	n = n << z;
 	d = d << z;
-	uint32_t u = g_unr_table[(d - 0x7fc0) >> 7] + 0x101;
+	int32_t u = g_unr_table[(d - 0x7fc0) >> 7] + 0x101;
 	d = (0x2000080 - (d * u)) >> 8;
 	d = (0x0000080 + (d * u)) >> 8;
-	return MIN(0x1ffff, ((nl * d) + 0x8000) >> 16);
+	return MIN(0x1ffff, ((n * d) + 0x8000) >> 16);
 }
+
+/*
+static inline uint32_t unr_divide(struct psx_cpu* cpu, uint16_t n, uint16_t d) {
+	if (n >= d * 2) {
+	    cpu->gte_regs.flag.div_ovf = true;
+
+            return 0x1ffff;
+	}
+	int shift = lzc(d) - 16;
+
+	int r1 = (d << shift) & 0x7fff;
+	int r2 = g_unr_table[((r1 + 0x40) >> 7)] + 0x101;
+	int r3 = ((0x80 - (r2 * (r1 + 0x8000))) >> 8) & 0x1ffff;
+
+	uint32_t reciprocal = ((r2 * r3) + 0x80) >> 8;
+	uint32_t res = ((((uint64_t)reciprocal * (n << shift)) + 0x8000) >> 16);
+
+	return MIN(0x1ffff, res);
+}
+*/
 
 static void avsz3(struct psx_cpu* cpu) {
 	int64_t avg = I64((int16_t)ZSF3) * (SZ(1) + SZ(2) + SZ(3));
@@ -403,22 +426,24 @@ static void rtps(struct psx_cpu* cpu, int vi, bool finalize) {
 
 	SZ_SHIFT();
 	SZ(3) = CHK_SZ3(in_mac3 >> 12);
-	int32_t perspective_factor;
+	int32_t perspective_factor = unr_divide(cpu, H, SZ(3));
+	/*
 	if(H < (SZ(3) * 2)) {
 		perspective_factor = unr_divide(cpu, H, SZ(3));
 	} else {
 		perspective_factor = 0x1ffff;
 		cpu->gte_regs.flag.div_ovf = true;
 	}
+	*/
 
 	gte_log(stderr, "UNR division (0x%x / 0x%x) returned 0x%x\n", H, SZ(3), perspective_factor);
 
 	SXY_SHIFT();
-	int64_t in_mac0 = (I64((int16_t)DQA) * perspective_factor) + I64(DQB);
-	SX(2) = CHK_SX2(CHK_MAC0((I64((int16_t)IR(1)) * perspective_factor) + I64((int32_t)OFX)) >> 16);
-	SY(2) = CHK_SY2(CHK_MAC0((I64((int16_t)IR(2)) * perspective_factor) + I64((int32_t)OFY)) >> 16);
+	SX(2) = CHK_SX2(CHK_MAC0(I64((int32_t)OFX) + (I64((int16_t)IR(1)) * perspective_factor)) >> 16);
+	SY(2) = CHK_SY2(CHK_MAC0(I64((int32_t)OFY) + (I64((int16_t)IR(2)) * perspective_factor)) >> 16);
 
 	if(finalize) {
+		int64_t in_mac0 = I64(DQB) + (I64((int16_t)DQA) * perspective_factor);
 		MAC(0) = CHK_MAC0(in_mac0);
 		IR(0) = CHK_IR0(in_mac0 >> 12);
 	}
@@ -429,9 +454,9 @@ static void nclip(struct psx_cpu* cpu) {
 }
 
 static void sqr(struct psx_cpu* cpu) {
-	MAC(1) = CHK_MAC1(I64((int16_t)IR(1)) * I64((int16_t)IR(1)));
-	MAC(2) = CHK_MAC2(I64((int16_t)IR(2)) * I64((int16_t)IR(2)));
-	MAC(3) = CHK_MAC3(I64((int16_t)IR(3)) * I64((int16_t)IR(3)));
+	MAC(1) = SAT_MAC1(I64((int16_t)IR(1)) * I64((int16_t)IR(1)));
+	MAC(2) = SAT_MAC2(I64((int16_t)IR(2)) * I64((int16_t)IR(2)));
+	MAC(3) = SAT_MAC3(I64((int16_t)IR(3)) * I64((int16_t)IR(3)));
 
 	IR(1) = CHK_IR1(MAC(1));
 	IR(2) = CHK_IR2(MAC(2));
@@ -463,7 +488,6 @@ static void ncs(struct psx_cpu* cpu, int vi) {
 	B(2) = CHK_B(MAC(3) >> 4);
 }
 
-// has various errors on IRs, some hundred tests pass
 static void nccs(struct psx_cpu* cpu, int vi) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -497,7 +521,6 @@ static void nccs(struct psx_cpu* cpu, int vi) {
 	IR(3) = CHK_IR3(MAC(3));
 }
 
-// something wrong with the flags
 static void ncds(struct psx_cpu* cpu, int vi) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -537,6 +560,58 @@ static void ncds(struct psx_cpu* cpu, int vi) {
 	B(2) = CHK_B(MAC(3) >> 4);
 }
 
+static void cc(struct psx_cpu* cpu) {
+	int64_t in_ir1 = I64((int16_t)IR(1)), in_ir2 = I64((int16_t)IR(2)), in_ir3 = I64((int16_t)IR(3));
+	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2) + I64(LR(3)) * in_ir3);
+	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2) + I64(LG(3)) * in_ir3);
+	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2) + I64(LB(3)) * in_ir3);
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+	MAC(1) = SAT_MAC1((I64(RC) * I64((int16_t)IR(1))) << 4);
+	MAC(2) = SAT_MAC2((I64(GC) * I64((int16_t)IR(2))) << 4);
+	MAC(3) = SAT_MAC3((I64(BC) * I64((int16_t)IR(3))) << 4);
+
+	RGB_SHIFT();
+	CODE(2) = CC;
+	R(2) = CHK_R(MAC(1) >> 4);
+	G(2) = CHK_G(MAC(2) >> 4);
+	B(2) = CHK_B(MAC(3) >> 4);
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+}
+
+static void cdp(struct psx_cpu* cpu) {
+	int64_t in_ir1 = I64((int16_t)IR(1)), in_ir2 = I64((int16_t)IR(2)), in_ir3 = I64((int16_t)IR(3));
+	MAC(1) = SAT_MAC1(CHK_MAC1(CHK_MAC1(I64((int32_t)RBK) * 0x1000 + I64(LR(1)) * in_ir1) + I64(LR(2)) * in_ir2) + I64(LR(3)) * in_ir3);
+	MAC(2) = SAT_MAC2(CHK_MAC2(CHK_MAC2(I64((int32_t)GBK) * 0x1000 + I64(LG(1)) * in_ir1) + I64(LG(2)) * in_ir2) + I64(LG(3)) * in_ir3);
+	MAC(3) = SAT_MAC3(CHK_MAC3(CHK_MAC3(I64((int32_t)BBK) * 0x1000 + I64(LB(1)) * in_ir1) + I64(LB(2)) * in_ir2) + I64(LB(3)) * in_ir3);
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+
+	bool saved_lm = cpu->gte_cmd.lm;
+	cpu->gte_cmd.lm = false;
+	in_ir1 = CHK_IR1(SAT_MAC1((I64((int32_t)RFC) << 12) - (I64(RC << 4) * I64((int16_t)IR(1)))));
+	in_ir2 = CHK_IR2(SAT_MAC2((I64((int32_t)GFC) << 12) - (I64(GC << 4) * I64((int16_t)IR(2)))));
+	in_ir3 = CHK_IR3(SAT_MAC3((I64((int32_t)BFC) << 12) - (I64(BC << 4) * I64((int16_t)IR(3)))));
+	cpu->gte_cmd.lm = saved_lm;
+	
+	MAC(1) = SAT_MAC1(((I64(RC << 4)) * I64((int16_t)IR(1))) + (I64((int16_t)IR(0)) * in_ir1));
+	MAC(2) = SAT_MAC2(((I64(GC << 4)) * I64((int16_t)IR(2))) + (I64((int16_t)IR(0)) * in_ir2));
+	MAC(3) = SAT_MAC3(((I64(BC << 4)) * I64((int16_t)IR(3))) + (I64((int16_t)IR(0)) * in_ir3));
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+
+	RGB_SHIFT();
+	CODE(2) = CC;
+	R(2) = CHK_R(MAC(1) >> 4);
+	G(2) = CHK_G(MAC(2) >> 4);
+	B(2) = CHK_B(MAC(3) >> 4);
+}
+
 static void op(struct psx_cpu* cpu) {
 	int64_t d1 = RT(1, 1), d2 = RT(2, 2), d3 = RT(3, 3);
 	int64_t in_ir1 = I64((int16_t)IR(1)), in_ir2 = I64((int16_t)IR(2)), in_ir3 = I64((int16_t)IR(3));
@@ -550,21 +625,31 @@ static void op(struct psx_cpu* cpu) {
 	IR(3) = CHK_IR3(MAC(3));
 }
 
-static void dpcs(struct psx_cpu* cpu) {
-	// simulate hardware bug
+static void dpcs(struct psx_cpu* cpu, bool is_triple) {
+	int64_t r, g, b;
+	if(is_triple) {
+		r = cpu->gte_regs.rgb[0].r;
+		g = cpu->gte_regs.rgb[0].g;
+		b = cpu->gte_regs.rgb[0].b;
+	} else {
+		r = RC;
+		g = GC;
+		b = BC;
+	}
+	int64_t in_mac1 = SAT_MAC1((I64((int32_t)RFC) << 12) - (r << 16));
+	int64_t in_mac2 = SAT_MAC2((I64((int32_t)GFC) << 12) - (g << 16));
+	int64_t in_mac3 = SAT_MAC3((I64((int32_t)BFC) << 12) - (b << 16));
+
 	bool saved_lm = cpu->gte_cmd.lm;
 	cpu->gte_cmd.lm = false;
-	int64_t in_mac1 = SAT_MAC1((I64((int32_t)RFC) << 12) - (I64(RC) << 16));
-	int64_t in_mac2 = SAT_MAC2((I64((int32_t)GFC) << 12) - (I64(GC) << 16));
-	int64_t in_mac3 = SAT_MAC3((I64((int32_t)BFC) << 12) - (I64(BC) << 16));
 	int64_t in_ir1 = CHK_IR1(in_mac1);
 	int64_t in_ir2 = CHK_IR2(in_mac2);
 	int64_t in_ir3 = CHK_IR3(in_mac3);
-
 	cpu->gte_cmd.lm = saved_lm;
-	MAC(1) = SAT_MAC1((I64(RC) << 16) + (in_ir1 * I64((int16_t)IR(0))));
-	MAC(2) = SAT_MAC2((I64(GC) << 16) + (in_ir2 * I64((int16_t)IR(0))));
-	MAC(3) = SAT_MAC3((I64(BC) << 16) + (in_ir3 * I64((int16_t)IR(0))));
+
+	MAC(1) = SAT_MAC1((r << 16) + (in_ir1 * I64((int16_t)IR(0))));
+	MAC(2) = SAT_MAC2((g << 16) + (in_ir2 * I64((int16_t)IR(0))));
+	MAC(3) = SAT_MAC3((b << 16) + (in_ir3 * I64((int16_t)IR(0))));
 	IR(1) = CHK_IR1(MAC(1));
 	IR(2) = CHK_IR2(MAC(2));
 	IR(3) = CHK_IR3(MAC(3));
@@ -601,12 +686,33 @@ static void intpl(struct psx_cpu* cpu) {
 	B(2) = CHK_B(MAC(3) >> 4);
 }
 
-// something wrong with the flags (apparently MAC1 has the correct value but shouldn't set the flag?)
+static void dcpl(struct psx_cpu* cpu) {
+	MAC(1) = SAT_MAC1((RC * I64((int16_t)IR(1))) << 4); 
+	MAC(2) = SAT_MAC2((GC * I64((int16_t)IR(2))) << 4);
+	MAC(3) = SAT_MAC3((BC * I64((int16_t)IR(3))) << 4);
+	
+	bool saved_lm = cpu->gte_cmd.lm;
+	cpu->gte_cmd.lm = false;
+	int64_t in_ir1 = CHK_IR1(SAT_MAC1((I64((int32_t)RFC) << 12) - ((I64(RC << 4)) * I64((int16_t)IR(1)))));
+	int64_t in_ir2 = CHK_IR2(SAT_MAC2((I64((int32_t)GFC) << 12) - ((I64(GC << 4)) * I64((int16_t)IR(2)))));
+	int64_t in_ir3 = CHK_IR3(SAT_MAC3((I64((int32_t)BFC) << 12) - ((I64(BC << 4)) * I64((int16_t)IR(3)))));
+	cpu->gte_cmd.lm = saved_lm;
+	MAC(1) = SAT_MAC1(((I64(RC << 4)) * I64((int16_t)IR(1))) + (I64((int16_t)IR(0)) * in_ir1));
+	MAC(2) = SAT_MAC2(((I64(GC << 4)) * I64((int16_t)IR(2))) + (I64((int16_t)IR(0)) * in_ir2));
+	MAC(3) = SAT_MAC3(((I64(BC << 4)) * I64((int16_t)IR(3))) + (I64((int16_t)IR(0)) * in_ir3));
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+
+	RGB_SHIFT();
+	CODE(2) = CC;
+	R(2) = CHK_R(MAC(1) >> 4);
+	G(2) = CHK_G(MAC(2) >> 4);
+	B(2) = CHK_B(MAC(3) >> 4);
+}
+
 static void mvmva(struct psx_cpu* cpu) {
-	gte_log(stderr, "GTE: MVMVA(sf=%d, lm=%d, tx=%d, vx=%d, mx=%d) at 0x%08x\n", 
-			cpu->gte_cmd.sf, cpu->gte_cmd.lm, cpu->gte_cmd.translation_vec, 
-			cpu->gte_cmd.mult_vec, cpu->gte_cmd.mult_mat, cpu->regs.pc);
-	uint32_t txx = 0, txy = 0, txz = 0;
+	int32_t txx = 0, txy = 0, txz = 0;
 	switch(cpu->gte_cmd.translation_vec) {
 	case 0:
 		txx = TRX;
@@ -682,6 +788,21 @@ void gpf(struct psx_cpu* cpu) {
 	MAC(1) = SAT_MAC1(I64((int16_t)IR(0)) * I64((int16_t)IR(1)));
 	MAC(2) = SAT_MAC2(I64((int16_t)IR(0)) * I64((int16_t)IR(2)));
 	MAC(3) = SAT_MAC3(I64((int16_t)IR(0)) * I64((int16_t)IR(3)));
+	IR(1) = CHK_IR1(MAC(1));
+	IR(2) = CHK_IR2(MAC(2));
+	IR(3) = CHK_IR3(MAC(3));
+
+	RGB_SHIFT();
+	CODE(2) = CC;
+	R(2) = CHK_R(MAC(1) >> 4);
+	G(2) = CHK_G(MAC(2) >> 4);
+	B(2) = CHK_B(MAC(3) >> 4);
+}
+
+void gpl(struct psx_cpu* cpu) {
+	MAC(1) = SAT_MAC1((I64(MAC(1)) << (SF * 12)) + (I64((int16_t)IR(0)) * I64((int16_t)IR(1))));
+	MAC(2) = SAT_MAC2((I64(MAC(2)) << (SF * 12)) + (I64((int16_t)IR(0)) * I64((int16_t)IR(2))));
+	MAC(3) = SAT_MAC3((I64(MAC(3)) << (SF * 12)) + (I64((int16_t)IR(0)) * I64((int16_t)IR(3))));
 	IR(1) = CHK_IR1(MAC(1));
 	IR(2) = CHK_IR2(MAC(2));
 	IR(3) = CHK_IR3(MAC(3));
@@ -776,15 +897,12 @@ void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
 		cpu->clocks = 23;
 		return;
 	case GTE_RC_MVMVA: mvmva(cpu); cpu->clocks = 8; return;
-	case GTE_RC_DCPL:
-		name = "DCPL";
-		cpu->clocks = 8;
-		break;
-	case GTE_RC_DPCS: dpcs(cpu); cpu->clocks = 8; return;
+	case GTE_RC_DCPL: dcpl(cpu); cpu->clocks = 8; return;
+	case GTE_RC_DPCS: dpcs(cpu, false); cpu->clocks = 8; return;
 	case GTE_RC_DPCT:
-		dpcs(cpu);
-		dpcs(cpu);
-		dpcs(cpu);
+		dpcs(cpu, true);
+		dpcs(cpu, true);
+		dpcs(cpu, true);
 		cpu->clocks = 17;
 		return;
 	case GTE_RC_INTPL: intpl(cpu); cpu->clocks = 8; return;
@@ -810,25 +928,16 @@ void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
 		nccs(cpu, 2);
 		cpu->clocks = 39;
 		return;
-	case GTE_RC_CDP:
-		name = "CDP";
-		cpu->clocks = 13;
-		break;
-	case GTE_RC_CC:
-		name = "CC";
-		cpu->clocks = 11;
-		break;
+	case GTE_RC_CDP: cdp(cpu); cpu->clocks = 13; return;
+	case GTE_RC_CC: cc(cpu); cpu->clocks = 11; return;
 	case GTE_RC_NCLIP: nclip(cpu); cpu->clocks = 8; return;
 	case GTE_RC_AVSZ3: avsz3(cpu); cpu->clocks = 5; return;
 	case GTE_RC_AVSZ4: avsz4(cpu); cpu->clocks = 6; return;
 	case GTE_RC_OP: op(cpu); cpu->clocks = 6; return;
 	case GTE_RC_GPF: gpf(cpu); cpu->clocks = 5; return;
-	case GTE_RC_GPL:
-		name = "GPL";
-		cpu->clocks = 5;
-		break;
+	case GTE_RC_GPL: gpl(cpu); cpu->clocks = 5; return;
 	default:
-		return;
+		break;
 	}
 
 	fprintf(stderr, "GTE: unhandled %s(sf=%d, lm=%d, tx=%d, vx=%d, mx=%d)\n", 

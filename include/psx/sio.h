@@ -3,7 +3,6 @@
 
 #include <psx/system.h>
 #include <psx/memory.h>
-// #include <psx/backupunit.h>
 
 #include <stdbool.h>
 
@@ -62,8 +61,7 @@ struct psx_sio {
 	enum psx_sio_dev tx_address;
 	struct {
 		struct psx_pad* pad[2];
-		// memory cards are not implemented
-		// struct psx_mc* mc[2];
+		struct psx_bu* bu[2];
 	} dev;
 
 	struct psx_system* sys;

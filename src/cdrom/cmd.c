@@ -230,6 +230,14 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 	case CMD_SETLOC:
 		run_cmd(cdr, 3, CdlSetloc);
 		break;
+	case CMD_PLAY:
+		if(queue_items(cdr->param_queue) > 1) {
+			enq_error(cdr, CDROM_ERR_PARAMETERS);
+			break;
+		}
+		cdr->regs.ctrl.busy = true;
+		CdlPlay(cdr);
+		break;
 	case CMD_READN:
 	case CMD_READS:
 		run_cmd(cdr, 0, CdlRead);
@@ -261,8 +269,12 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 	case CMD_GETTN:
 		run_cmd(cdr, 0, CdlGetTN);
 		break;
+	case CMD_GETTD:
+		run_cmd(cdr, 1, CdlGetTD);
+		break;
 	case CMD_SEEKL:
-		run_cmd(cdr, 0, CdlSeekL);
+	case CMD_SEEKP:
+		run_cmd(cdr, 0, CdlSeek);
 		break;
 	case CMD_SETMODE:
 		run_cmd(cdr, 1, CdlSetmode);
@@ -283,48 +295,120 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 }
 
 void CdlNop(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlNop()");
-	// TODO: reportedly "CdlNop resets the ShellOpen flag for all subsequent commands, unless the shell is still open"
 	psx_cdr_stat_t stat = cdr_get_stat(cdr);
+	log_debug("CDROM: CdlNop() -> 0x%02x", AS_UINT8(stat));
+	// TODO: reportedly "CdlNop resets the ShellOpen flag for all subsequent commands, unless the shell is still open"
 	put_ack_response(&stat, 1);
 	cdr_schedule_ack_ev(cdr, 3);
 }
 
-// DOA spams this while waiting for CdControl to fail for some reason
 void CdlSetloc(struct psx_cdrom* cdr) {
 	uint8_t m = cdr_pop_param(cdr);
 	uint8_t s = cdr_pop_param(cdr);
 	uint8_t f = cdr_pop_param(cdr);
+	log_debug("CDROM: CdlSetloc(%02x:%02x:%02x)", m, s, f);
 	m = BCD_TO_BYTE(m);
 	s = BCD_TO_BYTE(s);
 	f = BCD_TO_BYTE(f);
-	log_debug("CDROM: CdlSetloc(%02hhu:%02hhu:%02hhu)", m, s, f);
 	cdr->seek.loc = MSF_TO_LBA(m, s, f);
 	cdr->seek.is_pending = true;
 	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3);
 }
 
+static void play_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) { 
+	struct cdr_event* self = (struct cdr_event*)_self;
+	struct psx_cdrom* cdr = sched->sys->cdrom;
+	if(cdr->state.seeking) {
+		cdr->state.seeking = false;
+		cdr->state.reading = true;
+	}
+	uint32_t delay = cdr_get_read_delay(cdr);
+	if(!cdr->disc_mode.report) {
+		goto play_end;
+	}
+	if(cdr->regs.irq_status.flags != 0) {
+		log_error("CDROM: completion should've been delayed");
+		delay = IRQ_RETRY_RATE;
+		goto play_end;
+	}
+	queue_clear(cdr->data_queue);
+	// read CDDA sector
+	if(cdr->loc % 16 == 0) {
+		log_debug("CDROM: play stub hit");
+		uint8_t cm, cs, cf;
+		if(cdr->report_absolute) {
+			uint32_t loc = cdr->loc - 150;
+			cm = BYTE_TO_BCD((loc / 4500) % 60);
+			cs = BYTE_TO_BCD((loc / 75) % 60) + 0x80;
+			cf = BYTE_TO_BCD(loc % 75);
+		} else {
+			uint32_t global_loc = cdr->loc;
+			cm = BYTE_TO_BCD((global_loc / 4500) % 60);
+			cs = BYTE_TO_BCD((global_loc / 75) % 60);
+			cf = BYTE_TO_BCD(global_loc % 75);
+		}
+		cdr->report_absolute = !cdr->report_absolute;
+
+		int track = 1;
+		uint8_t response[] = { AS_UINT8(cdr->state), track, 1, cm, cs, cf, 0x80, 0x80 };
+		queue_clear(cdr->resp_queue);
+		queue_push_buf(cdr->resp_queue, response, sizeof(response));
+		cdr->regs.ctrl.result_ready = true;
+		cdr_raise_irq(cdr, self->ival);
+	}
+	cdr->loc++;
+play_end:
+	psx_sched_remove_ev(sched, _self->id);
+	_self->eta = delay; 
+	psx_sched_add_ev(sched, _self);
+}
+
+static void play_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	struct psx_cdrom* cdr = sched->sys->cdrom;
+	// handle the selected track
+	// if cdr->next_track == 0 seek to setloc
+	cdr->state.seeking = true;
+	put_ack_response(&cdr->state, 1);
+	def_ack_evcb(sched, self);
+
+	uint32_t delay = cdr_get_read_delay(cdr) * 4;
+
+	// kickstart the play loop
+	cdr_schedule_comp_ev(cdr, 1, .trigger = play_comp_evcb, .eta = delay);
+}
+
+void CdlPlay(struct psx_cdrom* cdr) {
+	int track = 0;
+	if(queue_items(cdr->param_queue)) {
+		track = cdr_pop_param(cdr);
+	}
+	// cdr->next_track = track;
+	log_error("CdlPlay(%02x)", track);
+	cdr_schedule_ack_ev(cdr, 3, .trigger = play_ack_evcb);
+}
+
 static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct cdr_event* self = (struct cdr_event*)_self;
 	struct psx_cdrom* cdr = sched->sys->cdrom;
+	uint32_t delay;
+	if(cdr->regs.irq_status.flags != 0) {
+		log_error("CDROM: completion should've been delayed");
+		delay = IRQ_RETRY_RATE;
+		goto read_end;
+	}
 	queue_clear(cdr->data_queue);
 
+	// clear previous seek state if any
+	if(cdr->state.seeking) {
+		cdr->state.seeking = false;
+		cdr->state.reading = true;
+	}
+	delay = cdr_get_read_delay(cdr);
 	queue_clear(cdr->resp_queue);
 	queue_push(cdr->resp_queue, AS_UINT8(cdr->state));
 	cdr->regs.ctrl.result_ready = true;
-	uint32_t delay = cdr_get_read_delay(cdr);
-	if(cdr->seek.is_pending) {
-		cdr->loc = cdr->seek.loc;
-		cdr->seek.is_pending = false;
-		cdr->state.seeking = true;
-		delay = cdr_get_avg_delay(cdr);
-		goto read_end;
-	} else {
-		cdr->state.seeking = false;
-	}
 
-	cdr->state.reading = true;
 	int sync_size = (cdr->disc_mode.sector_size) ? 12 : 24;
 	cdr->disc->read_sector(cdr->disc->host_data, cdr->loc++, cdr->data_queue->buf);
 
@@ -332,7 +416,7 @@ static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	xa_hdr_t* subheader = (void*)&cdr->data_queue->buf[SECTOR_HDR_OFF + sizeof(header)];
 	if(header->mode == 2 && cdr->disc_mode.xa_mode) {
 		if(subheader->submode.is_audio && subheader->submode.realtime) {
-			log_debug("CDROM: XA sector skipped at LBA %d", cdr->loc);
+			log_debug("CDROM: XA sector skipped at LBA %d", cdr->loc - 1);
 			goto read_end;
 		}
 	}
@@ -343,22 +427,38 @@ static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	cdr->regs.ctrl.data_request = true;
 	cdr_raise_irq(cdr, self->ival);
 read_end:
-	psx_sched_remove_ev(sched, self->ev.id);
+	psx_sched_remove_ev(sched, _self->id);
 	_self->eta = delay; 
 	psx_sched_add_ev(sched, _self);
 }
 
 static void read_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
+	if(cdr->seek.is_pending) {
+		cdr->loc = cdr->seek.loc;
+		cdr->seek.is_pending = false;
+		uint8_t cm = BYTE_TO_BCD((cdr->loc / 4500) % 60);
+		uint8_t cs = BYTE_TO_BCD((cdr->loc / 75) % 60);
+		uint8_t cf = BYTE_TO_BCD(cdr->loc % 75);
+		log_debug("-> Read seek to %02x:%02x:%02x", cm, cs, cf);
+	}
+	cdr->state.seeking = true;
+	put_ack_response(&cdr->state, 1);
 	def_ack_evcb(sched, self);
+
+	uint32_t delay = cdr_get_read_delay(cdr) * 4;
+
 	// kickstart the read loop
-	cdr_schedule_comp_ev(cdr, 1, .trigger = read_comp_evcb, .eta = cdr_get_read_delay(cdr));
+	cdr_schedule_comp_ev(cdr, 1, .trigger = read_comp_evcb, .eta = delay);
 }
 
 void CdlRead(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlRead()");
+	uint32_t loc = cdr->loc - (150 + cdr->state.reading);
+	uint8_t cm = BYTE_TO_BCD((loc / 4500) % 60);
+	uint8_t cs = BYTE_TO_BCD((loc / 75) % 60);
+	uint8_t cf = BYTE_TO_BCD(loc % 75);
+	log_debug("CDROM: CdlRead(%02x:%02x:%02x)", cm, cs, cf);
 	// no disc error?
-	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3, .trigger = read_ack_evcb);
 }
 
@@ -384,24 +484,25 @@ static void stop_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	cdr->state.motor_on = false;
 	put_comp_response(&cdr->state, 1);
-	// cdr->loc = beginning of current track;
+	// cdr->loc = beginning of first track;
 	cdr->loc = 0;
 	def_comp_evcb(sched, self);
 }
 
 static void stop_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	// ACK -> clear read/play -> complete -> turn motor off/reset position
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	def_ack_evcb(sched, self);
 	
-	uint32_t delay = cdr_get_stop_delay(cdr);
-	if(cdr->state.reading) {
+	if(cdr->state.reading || cdr->state.playing) {
 		log_debug("CDROM: Read command aborted via Stop");
 		cdr->state.reading = false;
+		cdr->state.playing = false;
 		cdr_remove_ev(sched, &completion_ev);
-	} // else if playing ... else return
+	}
 	
 	put_comp_response(&cdr->state, 1);
-	cdr_schedule_comp_ev(cdr, 2, .eta = delay, .trigger = stop_comp_evcb);
+	cdr_schedule_comp_ev(cdr, 2, .eta = cdr_get_stop_delay(cdr), .trigger = stop_comp_evcb);
 }
 
 void CdlStop(struct psx_cdrom* cdr) {
@@ -414,15 +515,15 @@ static void pause_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	def_ack_evcb(sched, self);
 	
-	uint32_t delay = cdr_get_pause_delay(cdr);
-	if(cdr->state.reading) {
+	if(cdr->state.reading || cdr->state.playing) {
 		log_debug("CDROM: Read command aborted via Pause");
 		cdr->state.reading = false;
+		cdr->state.playing = false;
 		cdr_remove_ev(sched, &completion_ev);
-	} // else if playing ... else return
+	}
 	
 	put_comp_response(&cdr->state, 1);
-	cdr_schedule_comp_ev(cdr, 2, .eta = delay);
+	cdr_schedule_comp_ev(cdr, 2, .eta = cdr_get_pause_delay(cdr));
 }
 
 void CdlPause(struct psx_cdrom* cdr) {
@@ -461,18 +562,17 @@ void CdlDemute(struct psx_cdrom* cdr) {
 }
 
 void CdlSetfilter(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlSetfilter()");
 	uint8_t file = cdr_pop_param(cdr);
 	uint8_t chan = cdr_pop_param(cdr);
-	log_debug("XA file: 0x%02x, XA channel: 0x%02x", file, chan);
+	log_debug("CDROM: CdlSetfilter() -> XA file: 0x%02x, XA channel: 0x%02x", file, chan);
 	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3);
 }
 
 void CdlSetmode(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlSetmode()");
 	psx_disc_mode_t new_mode;
 	AS_UINT8(new_mode) = cdr_pop_param(cdr);
+	log_debug("CDROM: CdlSetmode() -> 0x%02x", AS_UINT8(new_mode));
 	cdr->disc_mode = new_mode;
 	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3);
@@ -485,30 +585,58 @@ void CdlGetTN(struct psx_cdrom* cdr) {
 	cdr_schedule_ack_ev(cdr, 3);
 }
 
-static void seek_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
-	struct psx_cdrom* cdr = sched->sys->cdrom;
-	def_comp_evcb(sched, self);
-	cdr->state.seeking = false;
+void CdlGetTD(struct psx_cdrom* cdr) {
+	int track = cdr_pop_param(cdr);
+	log_debug("CDROM: CdlGetTD(%02x)", track);
+	uint8_t tm, ts;
+	tm = 0;
+	if(track == 0) {
+		// get current track size
+		ts = 4;
+	} else {
+		ts = 2;
+	}
+	uint8_t dummy_track_data[] = { AS_UINT8(cdr->state), tm, ts };
+	put_ack_response(dummy_track_data, sizeof(dummy_track_data));
+	cdr_schedule_ack_ev(cdr, 3);
 }
 
-void CdlSeekL(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlSeekL()");
+static void seek_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	struct psx_cdrom* cdr = sched->sys->cdrom;
 	// what if cdr->seek.is_pending == false?
 	cdr->loc = cdr->seek.loc;
 	cdr->seek.is_pending = false;
-	cdr->state.seeking = true;
+	cdr->state.seeking = false;
+	put_comp_response(&cdr->state, 1);
+	def_comp_evcb(sched, self);
+}
+
+static void seekl_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	struct psx_cdrom* cdr = sched->sys->cdrom;
 	// dynamic calculation?? includes a random additional 0.5~1.0ms delay
-	uint32_t completion_delay = ACK_TIMESTAMP + cdr_get_avg_delay(cdr);
+	uint32_t completion_delay = cdr_get_read_delay(cdr) * 4;
 	if(!cdr->state.motor_on) {
 		cdr->state.motor_on = true;
 		completion_delay += cdr_get_avg_delay(cdr);
 	}
 
-	put_ack_response(&cdr->state, 1);
-	cdr_schedule_ack_ev(cdr, 3);
+	if(cdr->state.reading) {
+		log_debug("CDROM: Read command aborted via SeekL");
+		cdr->state.reading = false;
+		cdr_remove_ev(sched, &completion_ev);
+	}
 
-	put_comp_response(&cdr->state, 1);
+	cdr->state.seeking = true;
+	put_ack_response(&cdr->state, 1);
+	def_ack_evcb(sched, self);
 	cdr_schedule_comp_ev(cdr, 2, .trigger = seek_comp_evcb, .eta = completion_delay);
+}
+
+void CdlSeek(struct psx_cdrom* cdr) {
+	log_debug("CDROM: CdlSeek()");
+
+	put_ack_response(&cdr->state, 1);
+	cdr_schedule_ack_ev(cdr, 3, .trigger = seekl_ack_evcb);
 }
 
 static uint8_t dummy_date[] = { 0x94, 0x09, 0x19, 0xc0 };
@@ -557,14 +685,12 @@ void CdlGetID(struct psx_cdrom* cdr) {
 		char scex_str[] = "SCEA";
 		switch(cdr->disc->type) {
 		case PSX_DT_LICENSED:
-			// if MODE1 is used for a data disc this won't work
 			response.disc_type = MODE2_DISC_FLAG;
 			memcpy(response.validation_str, scex_str, 4);
 			break;
 		case PSX_DT_AUDIO:
 			response.disc_type = AUDIO_DISC_FLAG;
 			response.flags.is_audio = true;
-			// maybe not?
 			memcpy(response.validation_str, scex_str, 4);
 			break;
 		default:
@@ -587,16 +713,19 @@ void CdlGetlocL(struct psx_cdrom* cdr) {
 }
 
 void CdlGetlocP(struct psx_cdrom* cdr) {
-	log_debug("CDROM: CdlGetlocP()");
 	uint8_t track = 1, index = 1;
-	uint8_t cm = BYTE_TO_BCD((cdr->loc / 4500) % 60);
-	uint8_t cs = BYTE_TO_BCD((cdr->loc / 75) % 60);
-	uint8_t cf = BYTE_TO_BCD(cdr->loc % 75);
-	log_debug(" -> track=%02d, index=%02d @ track %02x:%02x:%02x | global %02x:%02x:%02x", track, index, cm, cs, cf, cm, cs, cf);
-	// TODO: make a getloc for the disc backend
-	uint8_t response[] = { AS_UINT8(cdr->state), track, index, cm, cs, cf, cm, cs + 2, cf };
+	uint32_t loc = cdr->loc - (150 + cdr->state.reading);
+	uint8_t cm = BYTE_TO_BCD((loc / 4500) % 60);
+	uint8_t cs = BYTE_TO_BCD((loc / 75) % 60);
+	uint8_t cf = BYTE_TO_BCD(loc % 75);
+	uint32_t global_loc = cdr->loc - cdr->state.reading;
+	uint8_t gm = BYTE_TO_BCD((global_loc / 4500) % 60);
+	uint8_t gs = BYTE_TO_BCD((global_loc / 75) % 60);
+	uint8_t gf = BYTE_TO_BCD(global_loc % 75);
+	log_debug("CDROM: CdlGetlocP() -> track=%02d, index=%02d @ track %02x:%02x:%02x | global %02x:%02x:%02x", 
+			track, index, cm, cs, cf, gm, gs, gf);
+	uint8_t response[] = { track, index, cm, cs, cf, gm, gs, gf };
 	put_ack_response(response, sizeof(response));
 	cdr_schedule_ack_ev(cdr, 3);
 }
-
 

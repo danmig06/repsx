@@ -39,12 +39,17 @@ bool pad_send(struct psx_pad* pad, uint8_t byte) {
 		pad->resp.off = 0;
 		pad->resp.nbytes = 1;
 		pad->session_active = true;
-		return true;
+		pad->processing_command = false;
+		goto ack;
 	}
 
 	psx_btnstate_t buttons;
+	if(pad->processing_command) {
+		goto ack;
+	}
 	switch(byte) {
 	case CMD_READ_BUTTONS:
+		pad->processing_command = true;
 		buttons = pad->host.poll(pad->host.data, PAD_INDEX(pad, pads));
 		uint16_t btn_data = AS_UINT16(buttons);
 		// ignore analog mode for now
@@ -66,6 +71,7 @@ bool pad_send(struct psx_pad* pad, uint8_t byte) {
 		}
 		break;
 	}
+ack:
 	// pull ACK high
 	return true;
 }

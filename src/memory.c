@@ -40,9 +40,9 @@ static struct psx_region* get_mapped_region(struct psx_mem* memory, uint32_t add
 	if(!selected_region) {
 		struct psx_cpu* cpu = memory->sys->cpu;
 		panic("0x%08x: Out-of-bounds access at address 0x%08x\n\
-				ra=0x%08x, a0=0x%08x, a1=0x%08x, a2=0x%08x, a3=0x%08x", 
-				cpu->regs.pc, addr, cpu->regs.ra, 
-				cpu->regs.a0, cpu->regs.a1, cpu->regs.a2, cpu->regs.a3);
+				ra=0x%08x, a0=0x%08x, a1=0x%08x, a2=0x%08x, a3=0x%08x, v0=0x%08x, v1=0x%08x", 
+				cpu->regs.pc, addr, cpu->regs.ra, cpu->regs.a0, cpu->regs.a1, 
+				cpu->regs.a2, cpu->regs.a3, cpu->regs.v0, cpu->regs.v1);
 	}
 
 	return selected_region;

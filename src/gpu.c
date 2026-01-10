@@ -48,7 +48,7 @@ static void gpu_hblank(struct psx_sched* sched, struct psx_sev* self) {
 
 	gpu->draw_state.hblanking = true;
 
-	psx_tmr_hblank(sched->sys->timer);
+	psx_tmr_hsync(sched->sys->timer);
 	psx_sched_add_ev(sched, &hblank_end_event);
 	psx_sched_remove_ev(sched, self->id);
 }
@@ -63,7 +63,6 @@ static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 		gpu->gpustat.scanline_odd = false;
 	}
 
-	psx_tmr_hblank_end(sched->sys->timer, gpu->scanline_count == PSX_GPU_TOTAL_SCANS_NTSC);
 	gpu->scanline_count++;
 	psx_sched_add_ev(sched, &hblank_event);
 	psx_sched_remove_ev(sched, self->id);
@@ -75,7 +74,7 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	gpu->draw_state.vblanking = true;
 	gpu->scanline_count = 0;
 
-	psx_tmr_vblank(sched->sys->timer);	
+	psx_tmr_vsync(sched->sys->timer);	
 	psx_irq_raise(sched->sys->irq, PSX_IRQ_ID_VBLANK);
 	gpu->renderer.update(&gpu->renderer);
 	psx_sched_remove_ev(sched, self->id);
@@ -350,32 +349,5 @@ void psx_gpu_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	}
 
 	log_error("GPU write8 0x%x:0x%08x", register_offset, val);
-}
-
-// used for (slow) non-scheduled emulation mode
-void psx_gpu_update(struct psx_gpu* gpu, float clocks) {
-	gpu->clocks += clocks * PSX_GPU_TO_CPU_CLK_RATE;
-	// check for HBLANK
-	if(!gpu->draw_state.hblanking && gpu->clocks >= PSX_GPU_CLOCKS_PER_HDRAW_NTSC) {
-		gpu->draw_state.hblanking = true;
-	} else if(gpu->clocks >= PSX_GPU_CLOCKS_PER_SCAN_NTSC) {
-		gpu->clocks -= PSX_GPU_CLOCKS_PER_SCAN_NTSC;
-		gpu->draw_state.hblanking = false;
-		if(gpu->scanline_count < PSX_GPU_VISIBLE_SCANS_NTSC) {
-			gpu->gpustat.scanline_odd = gpu->scanline_count & 1;
-		} else {
-			gpu->gpustat.scanline_odd = false;
-		}
-		gpu->scanline_count++;
-
-		// check for VBLANK
-		if(!gpu->draw_state.vblanking && gpu->scanline_count == PSX_GPU_VISIBLE_SCANS_NTSC) {
-			gpu->draw_state.vblanking = true;
-			psx_irq_raise(gpu->sys->irq, PSX_IRQ_ID_VBLANK);
-		} else if(gpu->scanline_count == PSX_GPU_TOTAL_SCANS_NTSC) {
-			gpu->draw_state.vblanking = false;
-			gpu->scanline_count = 0;
-		}
-	}
 }
 

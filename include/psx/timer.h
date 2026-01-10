@@ -43,9 +43,8 @@ struct psx_timer {
 void psx_tmr_init(struct psx_timer* tmr);
 void psx_tmr_tick(struct psx_timer* tmr, int clocks);
 // vblank/hblank tick events
-void psx_tmr_hblank(struct psx_timer* tmr); 
-void psx_tmr_hblank_end(struct psx_timer* tmr, bool vblank_end); 
-void psx_tmr_vblank(struct psx_timer* tmr); 
+void psx_tmr_hsync(struct psx_timer* tmr); 
+void psx_tmr_vsync(struct psx_timer* tmr); 
 
 uint32_t psx_tmr_read32(struct psx_region* reg, uint32_t addr);
 void psx_tmr_write32(struct psx_region* reg, uint32_t addr, uint32_t val);

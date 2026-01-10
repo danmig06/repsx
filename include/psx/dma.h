@@ -90,7 +90,6 @@ struct psx_dmac {
 
 void psx_dmac_init(struct psx_dmac* dmac);
 void psx_dmac_run_transfers(struct psx_dmac* dmac);
-void psx_dmac_update(struct psx_dmac* dmac);
 
 uint32_t psx_dmac_read32(struct psx_region* reg, uint32_t addr);
 void psx_dmac_write32(struct psx_region* reg, uint32_t addr, uint32_t val);

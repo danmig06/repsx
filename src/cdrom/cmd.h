@@ -25,6 +25,7 @@ enum {
 enum {
 	CMD_NOP       = 0x01,
 	CMD_SETLOC    = 0x02,
+	CMD_PLAY      = 0x03,
 	CMD_READN     = 0x06,
 	CMD_MOTORON   = 0x07,
 	CMD_STOP      = 0x08,
@@ -38,6 +39,7 @@ enum {
 	CMD_GETTN     = 0x13,
 	CMD_GETTD     = 0x14,
 	CMD_SEEKL     = 0x15,
+	CMD_SEEKP     = 0x16,
 	CMD_TEST      = 0x19,
 	CMD_GETID     = 0x1a,
 	CMD_READS     = 0x1b,
@@ -65,8 +67,7 @@ void CdlGetlocP(struct psx_cdrom* cdr);
 void CdlSetsession(struct psx_cdrom* cdr);
 void CdlGetTN(struct psx_cdrom* cdr);
 void CdlGetTD(struct psx_cdrom* cdr);
-void CdlSeekL(struct psx_cdrom* cdr);
-void CdlSeekP(struct psx_cdrom* cdr);
+void CdlSeek(struct psx_cdrom* cdr);
 void CdlTest(struct psx_cdrom* cdr);
 void CdlGetID(struct psx_cdrom* cdr);
 void CdlReset(struct psx_cdrom* cdr);

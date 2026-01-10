@@ -20,6 +20,7 @@ void psx_cdr_reset(struct psx_cdrom* cdr) {
 	cdr->regs.ctrl.param_empty = true;
 	cdr->regs.ctrl.param_wr_ready = true;
 	cdr->loc = 0;
+	cdr->report_absolute = false;
 }
 
 static void cdr_push_param(struct psx_cdrom* cdr, uint8_t pb) {

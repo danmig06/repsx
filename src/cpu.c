@@ -231,11 +231,15 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 				fputs("<NULL>", stderr);
 			}
 
-			char* str = (char*)&cpu->sys->memory->phys[PSX_MEM_REAL_ADDR(cpu->regs.a0)];
-			fprintf(stderr, "%s\r\n", str);
+			char* str = (char*)&cpu->sys->memory->phys[cpu->regs.a0 & 0x1fffff];
+			fputs(str, stderr);
+			break;
+		case 0x40:
+			log_fatal("0x%08x: SystemErrorUnresolvedException() (ra=0x%08x, cause=0x%08x)", cpu->regs.pc, cpu->regs.ra, AS_UINT32(cpu->cop0_regs.cause));
+			__asm__ volatile ("int3");
 			break;
 		case 0xa1:
-			log_fatal("SystemError('%c', %d)", cpu->regs.r[4], cpu->regs.r[5]);
+			log_fatal("0x%08x: SystemError('%c', %d)", cpu->regs.pc, cpu->regs.r[4], cpu->regs.r[5]);
 			exit(cpu->regs.r[5]);
 			break;
 		}
@@ -252,7 +256,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 				fputs("<NULL>", stderr);
 			}
 
-			char* str = (char*)&cpu->sys->memory->phys[PSX_MEM_REAL_ADDR(cpu->regs.a0)];
+			char* str = (char*)&cpu->sys->memory->phys[cpu->regs.a0 & 0x1fffff];
 			fprintf(stderr, "%s\r\n", str);
 			break;
 

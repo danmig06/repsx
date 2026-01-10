@@ -2,6 +2,7 @@
 #include <psx/sched.h>
 #include <psx/irq.h>
 
+#include "backupunit.h"
 #include "pad.h"
 #include "log.h"
 
@@ -45,9 +46,8 @@ void psx_sio_reset(struct psx_sio* sio) {
 
 static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 	sio->regs.stat.rx_not_empty = true;
-	struct psx_pad* pad;
 	if(device_id == PSX_SIO_DEV_CONTROLLER) {
-		pad = sio->dev.pad[SIO0_PORT(sio)];
+		struct psx_pad* pad = sio->dev.pad[SIO0_PORT(sio)];
 		if(!pad) {
 			// pad[port] is not connected, the system will try to read the device ID 
 			// anyway and the response should just be HiZ
@@ -69,8 +69,28 @@ static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 		}
 		return true;
 	} else if(device_id >= PSX_SIO_DEV_MEMCARD) {
-		log_error("SIO0: memory cards are not implemented");
-		sio->regs.stat.dsr_input_level = false;
+		struct psx_bu* bu = sio->dev.bu[SIO0_PORT(sio)];
+		if(!bu) {
+			// bu[port] is not connected, the system will try to read the device ID 
+			// anyway and the response should just be HiZ
+			sio->regs.stat.dsr_input_level = false;
+			return false;
+		}
+		log_trace("SIO0: selected device 0x%02x", device_id);
+		sio->tx_address = device_id;
+		sio->regs.stat.rx_not_empty = false;
+		
+		if(!sio->irq_scheduled) {
+			sio->irq_scheduled = true;
+			// TX and RX lines will be busy until HiZ arrives
+			sio->regs.stat.tx_not_full = false;
+			sio->regs.stat.tx_idle = false;
+			sio->regs.stat.rx_not_empty = false;
+			psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
+		} else {
+			log_error("SIO0: cannot schedule selection IRQ");
+		}
+		return true;
 	} else {
 		log_error("SIO0: unsupported device selected");
 		sio->regs.stat.dsr_input_level = false;
@@ -86,8 +106,18 @@ static void unselect_device(struct psx_sio* sio) {
 	if(sio->dev.pad[1]) {
 		sio->dev.pad[1]->reset(sio->dev.pad[1]);
 	}
+	if(sio->dev.bu[0]) {
+		sio->dev.bu[0]->reset(sio->dev.bu[0]);
+	}
+	if(sio->dev.bu[1]) {
+		sio->dev.bu[1]->reset(sio->dev.bu[1]);
+	}
 	sio->regs.stat.tx_not_full = true;
 	sio->regs.stat.tx_idle = true;
+	if(sio->irq_scheduled) {
+		sio->irq_scheduled = false;
+		psx_sched_remove_ev(sio->sys->sched, byte_received_irq.id);
+	}
 
 	sio->tx_address = PSX_SIO_DEV_NONE;
 }
@@ -100,7 +130,18 @@ static void do_transmission(struct psx_sio* sio, uint8_t val) {
 		}
 	}
 
+	/* TODO: generalize this interface, could live inside an internal header
+	 *	struct sio_dev {
+	 *		bool (*send)(struct sio_dev*, uint8_t);
+	 *		uint8_t (*recv)(struct sio_dev*);
+	 *		void (*reset)(struct sio_dev*);
+	 *		bool (*tx_finished)(struct sio_dev*);
+	 *	};
+	 * then just bind the current device and call its functions
+	 * directly (by taking &xxx->dev).
+	 */
 	struct psx_pad* pad;
+	struct psx_bu* bu;
 	switch(sio->tx_address) {
 	case PSX_SIO_DEV_CONTROLLER:
 		pad = sio->dev.pad[SIO0_PORT(sio)];
@@ -117,7 +158,22 @@ static void do_transmission(struct psx_sio* sio, uint8_t val) {
 		}
 		break;
 	case PSX_SIO_DEV_MEMCARD:
-		log_error("SIO0: unhandled memcard write");
+		bu = sio->dev.bu[SIO0_PORT(sio)];
+		sio->regs.stat.dsr_input_level = bu->send(bu, val);
+		log_warn("SIO0: bu sent 0x%02x", val);
+		if(sio->regs.stat.dsr_input_level) {
+			// if the device acknowledged the transmission then 
+			// the TX line will be busy until the response arrives
+			sio->regs.stat.tx_idle = false;
+			// last byte gets no interrupt
+			if(!sio->irq_scheduled && !bu->tx_finished(bu)) {
+				log_warn("SIO0: bu IRQ scheduled");
+				sio->irq_scheduled = true;
+				psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
+			} else {
+				log_warn("SIO0: bu transmission ended");
+			}
+		}
 		break;
 	case PSX_SIO_DEV_NONE:
 	default:
@@ -130,15 +186,20 @@ static uint8_t rx_update(struct psx_sio* sio) {
 	uint8_t val = 0xff;
 
 	struct psx_pad* pad;
+	struct psx_bu* bu;
 	switch(sio->tx_address) {
 	case PSX_SIO_DEV_CONTROLLER:
 		pad = sio->dev.pad[SIO0_PORT(sio)];
 		log_trace("SIO0: pad read %s", (sio->regs.stat.rx_not_empty) ? "(data ready)" : "(not ready)");
 		val = pad->recv(pad);
-		sio->regs.stat.rx_not_empty = !pad->tx_finished(pad);
+		sio->regs.stat.rx_not_empty = true; // !pad->tx_finished(pad);
 		break;
 	case PSX_SIO_DEV_MEMCARD:
-		log_error("SIO0: unhandled memcard read");
+		bu = sio->dev.bu[SIO0_PORT(sio)];
+		log_trace("SIO0: bu read %s", (sio->regs.stat.rx_not_empty) ? "(data ready)" : "(not ready)");
+		val = bu->recv(bu);
+		log_warn("SIO0: bu got 0x%02x", val);
+		sio->regs.stat.rx_not_empty = true; // !bu->tx_finished(bu);
 		break;
 	case PSX_SIO_DEV_NONE:
 	default:
@@ -161,6 +222,7 @@ uint32_t psx_sio_read32(struct psx_region* reg, uint32_t addr) {
 	if(!reg->peripheral) return val;
 	if(register_offset < 4) {
 		sio->regs.rx_data = rx_update(reg->peripheral);	
+		sio->regs.stat.rx_not_empty = false;
 	}
 
 	uint8_t* regs = reg->peripheral;
@@ -180,6 +242,13 @@ static void handle_write(struct psx_sio* sio, uint32_t off) {
 		sio->regs.ctrl.acknowledge = false;
 	}
 
+	if(sio->regs.ctrl.reset) {
+		// log_error("SIO0: reset");
+		// resets "most of the registers", which?
+		unselect_device(sio);
+		sio->regs.ctrl.reset = false;
+	}
+
 	if(!sio->regs.ctrl.dtr_out_level && sio->tx_address != PSX_SIO_DEV_NONE) {
 		unselect_device(sio);
 	}
@@ -196,7 +265,6 @@ void psx_sio_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 	if(register_offset < 4) {
 		do_transmission(sio, val & 0xff);
 	} else {
-		if(!reg->peripheral) return;
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
 		handle_write(reg->peripheral, register_offset);
@@ -237,7 +305,6 @@ void psx_sio_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 	if(register_offset < 4) {
 		do_transmission(sio, val & 0xff);
 	} else {
-		if(!reg->peripheral) return;
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
 		handle_write(reg->peripheral, register_offset);

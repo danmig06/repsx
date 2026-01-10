@@ -24,7 +24,7 @@ uint32_t psx_spu_read32(struct psx_region* reg, uint32_t addr) {
 
 	uint32_t val;
 	memcpy(&val, &regs[register_offset], sizeof(val));
-	log_warn("SPU read32 (0x%08x) (offset <0x%x>)", val, register_offset);
+	log_trace("SPU read32 (0x%08x) (offset <0x%x>)", val, register_offset);
 	return val;
 }
 
@@ -41,7 +41,7 @@ void psx_spu_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 	memcpy(&regs[register_offset], &val, sizeof(val));
 	spu->regs.spustat &= 0xffc0;
 	spu->regs.spustat |= spu->regs.spucnt & 0x3f;
-	log_warn("SPU write32 (0x%08x) (offset <0x%x>)", val, register_offset);
+	log_trace("SPU write32 (0x%08x) (offset <0x%x>)", val, register_offset);
 }
 
 uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
@@ -56,7 +56,7 @@ uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
 
 	uint16_t val;
 	memcpy(&val, &regs[register_offset], sizeof(val));
-	log_warn("SPU read16 (0x%04x) (offset <0x%x>)", val, register_offset);
+	log_trace("SPU read16 (0x%04x) (offset <0x%x>)", val, register_offset);
 	return val;
 }
 
@@ -73,7 +73,7 @@ void psx_spu_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 	memcpy(&regs[register_offset], &val, sizeof(val));
 	spu->regs.spustat &= 0xffc0;
 	spu->regs.spustat |= spu->regs.spucnt & 0x3f;
-	log_warn("SPU write16 (0x%04x) (offset <0x%x>)", val, register_offset);
+	log_trace("SPU write16 (0x%04x) (offset <0x%x>)", val, register_offset);
 }
 
 uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
@@ -88,7 +88,7 @@ uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
 
 	uint16_t val;
 	memcpy(&val, &regs[register_offset], sizeof(val));
-	log_warn("SPU read8 (0x%02x) (offset <0x%x>)", val, register_offset);
+	log_trace("SPU read8 (0x%02x) (offset <0x%x>)", val, register_offset);
 	return val;
 }
 
@@ -105,6 +105,6 @@ void psx_spu_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	regs[register_offset] = val;
 	spu->regs.spustat &= 0xffc0;
 	spu->regs.spustat |= spu->regs.spucnt & 0x3f;
-	log_warn("SPU write8 (0x%02x) (offset <0x%x>)", val, register_offset);
+	log_trace("SPU write8 (0x%02x) (offset <0x%x>)", val, register_offset);
 }
 
