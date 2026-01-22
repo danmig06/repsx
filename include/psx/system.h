@@ -17,25 +17,25 @@ enum {
 };
 
 // needed for pad drivers
-typedef struct psx_btnstate {
-	bool select: 1;
-	bool L3: 1;
-	bool R3: 1;
-	bool start: 1;
-	bool up: 1;
-	bool right: 1;
-	bool down: 1;
-	bool left: 1;
-	bool L2: 1;
-	bool R2: 1;
-	bool L1: 1;
-	bool R1: 1;
-	bool triangle: 1;
-	bool circle: 1;
-	bool cross: 1;
-	bool square: 1;
-} psx_btnstate_t;
-typedef psx_btnstate_t (*psx_padpollfn_t)(void*, int);
+enum {
+	PSX_PADBTN_SELECT   = (1 << 0),
+	PSX_PADBTN_L3       = (1 << 1),
+	PSX_PADBTN_R3       = (1 << 2),
+	PSX_PADBTN_START    = (1 << 3),
+	PSX_PADBTN_UP       = (1 << 4),
+	PSX_PADBTN_RIGHT    = (1 << 5),
+	PSX_PADBTN_DOWN     = (1 << 6),
+	PSX_PADBTN_LEFT     = (1 << 7),
+	PSX_PADBTN_L2       = (1 << 8),
+	PSX_PADBTN_R2       = (1 << 9),
+	PSX_PADBTN_L1       = (1 << 10),
+	PSX_PADBTN_R1       = (1 << 11),
+	PSX_PADBTN_TRIANGLE = (1 << 12),
+	PSX_PADBTN_CIRCLE   = (1 << 13),
+	PSX_PADBTN_CROSS    = (1 << 14),
+	PSX_PADBTN_SQUARE   = (1 << 15),
+};
+typedef uint16_t (*psx_padpollfn_t)(void*);
 
 // TODO: move these elsewhere, make a public memcard API, maybe with filesystem parsing
 #define PSX_BU_SECTOR_SIZE 128

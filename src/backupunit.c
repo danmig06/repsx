@@ -269,7 +269,7 @@ bool bu_send(struct psx_bu* bu, uint8_t byte) {
 		bu->response = bu->flag;
 		break;
 	default:
-		log_error("BU: unknown command byte 0x%02x\n", byte);
+		log_error("BU: unknown command byte 0x%02x", byte);
 		bu->session_active = false;
 		break;
 		// return false;

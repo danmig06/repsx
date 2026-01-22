@@ -1,0 +1,80 @@
+#ifndef RDEF_CPU
+#define RDEF_CPU
+
+#include "../util.h"
+
+// SCC/COP0
+enum {
+	SR_IE = BIT(0),
+	SR_KU = BIT(1),
+	SR_PREV_IE = BIT(2),
+	SR_PREV_KU = BIT(3),
+	SR_IKM = BIT_RANGE(0, 6),
+#define SR_IKM_SET(o, v) SET_BITS(o, v, SR_IKM, 0)
+#define SR_IKM_GET(o) GET_BITS(o, SR_IKM, 0)
+
+	SR_IMASK = BIT_RANGE(8, 8),
+#define SR_IMASK_SET(o, v) SET_BITS(o, v, SR_IMASK, 8)
+#define SR_IMASK_GET(o) GET_BITS(o, SR_IMASK, 8)
+
+	SR_ISC = BIT(16),
+	SR_BEV = BIT(22),
+	SR_COP0_EN = BIT(28),
+	SR_COP2_EN = BIT(30)
+};
+
+enum {
+	CAUSE_EXC = BIT_RANGE(2, 5),
+#define CAUSE_EXC_SET(o, v) SET_BITS(o, v, CAUSE_EXC, 2)
+#define CAUSE_EXC_GET(o) GET_BITS(o, CAUSE_EXC, 2)
+
+	CAUSE_IP = BIT_RANGE(10, 6),
+#define CAUSE_IP_SET(o, v) SET_BITS(o, v, CAUSE_IP, 10)
+#define CAUSE_IP_GET(o) GET_BITS(o, CAUSE_IP, 10)
+
+	CAUSE_BT = BIT(30),
+	CAUSE_BD = BIT(31)
+};
+
+// GTE/COP2
+enum {
+	CMD_RCODE = BIT_RANGE(0, 6),
+#define CMD_RCODE_GET(o) GET_BITS(o, CMD_RCODE, 0)
+
+	CMD_LM = BIT(10),
+	CMD_TX = BIT_RANGE(13, 2),
+#define CMD_TX_GET(o) GET_BITS(o, CMD_TX, 13)
+	
+	CMD_VX = BIT_RANGE(15, 2),
+#define CMD_VX_GET(o) GET_BITS(o, CMD_VX, 15)
+	
+	CMD_MX = BIT_RANGE(17, 2),
+#define CMD_MX_GET(o) GET_BITS(o, CMD_MX, 17)
+
+	CMD_SF = BIT(19)
+};
+
+enum {
+	GF_IR0_SAT = BIT(12),
+	GF_SY2_SAT = BIT(13),
+	GF_SX2_SAT = BIT(14),
+	GF_MAC0_OVF_NEG = BIT(15),
+	GF_MAC0_OVF_POS = BIT(16),
+	GF_DIV_OVF = BIT(17),
+	GF_Z_SAT = BIT(18),
+	GF_CB_SAT = BIT(19),
+	GF_CG_SAT = BIT(20),
+	GF_CR_SAT = BIT(21),
+	GF_IR3_SAT = BIT(22),
+	GF_IR2_SAT = BIT(23),
+	GF_IR1_SAT = BIT(24),
+	GF_MAC1_OVF_NEG = BIT(25),
+	GF_MAC2_OVF_NEG = BIT(26),
+	GF_MAC3_OVF_NEG = BIT(27),
+	GF_MAC1_OVF_POS = BIT(28),
+	GF_MAC2_OVF_POS = BIT(29),
+	GF_MAC3_OVF_POS = BIT(30),
+	GF_ERROR = BIT(31)
+};
+
+#endif

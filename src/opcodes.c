@@ -5,6 +5,7 @@
 #include "log.h"
 #include "opcodes.h"
 #include "gte.h"
+#include "rdef/cpu.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -78,25 +79,26 @@ static void prepare_load(struct psx_cpu* cpu, unsigned target_reg, uint32_t valu
 }
 
 void enter_exception(struct psx_cpu* cpu, uint32_t cause) {
-	uint32_t handler = (cpu->cop0_regs.sr.bev) ? 0xbfc00180 : 0x80000080;
+	uint32_t handler = (cpu->cop0_regs.sr & SR_BEV) ? 0xbfc00180 : 0x80000080;
 
-	AS_UINT32(cpu->cop0_regs.cause) = cause << 2;
+	cpu->cop0_regs.cause = cause << 2;
 	cpu->cop0_regs.epc = cpu->saved_pc;
 
 	if(cpu->branch_delay) {
 		cpu->cop0_regs.epc -= 4;
 		// set the BD flag
-		cpu->cop0_regs.cause.bd = true;
+		cpu->cop0_regs.cause |= CAUSE_BD;
 		// set the BT flag
-		cpu->cop0_regs.cause.bt = cpu->branch_taken;
+		if(cpu->branch_taken) {
+			cpu->cop0_regs.cause |= CAUSE_BT;
+		} else {
+			cpu->cop0_regs.cause &= ~CAUSE_BT;
+		}
 	}
 
 	// "push" next interrupt mode in the SR
-	uint32_t sr = AS_UINT32(cpu->cop0_regs.sr);
-	uint32_t prev_mode = sr & 0x3f;
-	sr &= ~(0x3f);
-	sr |= (prev_mode << 2) & 0x3f;
-	AS_UINT32(cpu->cop0_regs.sr) = sr;
+	uint32_t prev_mode = SR_IKM_GET(cpu->cop0_regs.sr);
+	SR_IKM_SET(cpu->cop0_regs.sr, prev_mode << 2);
 
 	cpu->regs.pc = handler;
 	cpu->next_pc = cpu->regs.pc + 4;
@@ -120,7 +122,7 @@ void ori(struct psx_cpu* cpu, uint32_t insn) {
 
 void sw(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("sw $%u, %d($%u)", T(insn), IMM_SE(insn), S(insn));
-	if(cpu->cop0_regs.sr.isc == true) {
+	if(cpu->cop0_regs.sr & SR_ISC) {
 		return;
 	}
 
@@ -220,7 +222,7 @@ void addu(struct psx_cpu* cpu, uint32_t insn) {
 
 void sh(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("sh $%u, %d($%u)", T(insn), IMM_SE(insn), S(insn));
-	if(cpu->cop0_regs.sr.isc == true) {
+	if(cpu->cop0_regs.sr & SR_ISC) {
 		return;
 	}
 
@@ -246,7 +248,7 @@ void andi(struct psx_cpu* cpu, uint32_t insn) {
 
 void sb(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("sb $%u, %d($%u)", T(insn), IMM_SE(insn), S(insn));
-	if(cpu->cop0_regs.sr.isc == true) {
+	if(cpu->cop0_regs.sr & SR_ISC) {
 		return;
 	}
 
@@ -472,11 +474,11 @@ void rfe(struct psx_cpu* cpu, uint32_t insn) {
 		panic("Invalid COP0 instruction 0x%08x", insn);
 	}
 
-	// invert the mode changes made by the CPU when handling the current exception
-	uint32_t mode = AS_UINT32(cpu->cop0_regs.sr) & 0x3f;
+	// revert the mode changes made by the CPU when handling the current exception
+	uint32_t new_mode = SR_IKM_GET(cpu->cop0_regs.sr);
 	// old ie and ku bits don't get cleared by rfe
-	AS_UINT32(cpu->cop0_regs.sr) &= ~(0xf);
-	AS_UINT32(cpu->cop0_regs.sr) |= (mode >> 2) & 0xf;
+	cpu->cop0_regs.sr &= ~(SR_IE | SR_KU | SR_PREV_IE | SR_PREV_KU);
+	cpu->cop0_regs.sr |= (new_mode >> 2) & (SR_IE | SR_KU | SR_PREV_IE | SR_PREV_KU);
 }
 
 void lhu(struct psx_cpu* cpu, uint32_t insn) {

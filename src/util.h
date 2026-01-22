@@ -17,6 +17,10 @@
 #define AS_UINT16(s) (*(uint16_t*)(&(s)))
 #define AS_UINT8(s) (*(uint8_t*)(&(s)))
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
+#define BIT(n) (1 << (n))
+#define BIT_RANGE(s, n) ((BIT(n) - 1) << (s))
+#define SET_BITS(o, v, msk, s) o = (o & ~(msk)) | (((v) << (s)) & (msk))
+#define GET_BITS(o, msk, s) (((o) & (msk)) >> (s))
 
 #define BE16(h) \
 	do { \

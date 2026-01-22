@@ -4,7 +4,6 @@
 #include <string.h>
 
 #define DUALSHOCK_ID(pad) ((pad->config_mode) ? 0xf3 : (pad->analog_mode) ? 0x73 : 0x41)
-#define PAD_INDEX(pad, pad_array) (((pad) - (pad_array)) / sizeof(*(pad)))
 
 static struct psx_pad pads[2] = { 
 	{ .send = pad_send, .recv = pad_recv, .reset = pad_reset, .tx_finished = pad_tx_finished },
@@ -43,23 +42,21 @@ bool pad_send(struct psx_pad* pad, uint8_t byte) {
 		goto ack;
 	}
 
-	psx_btnstate_t buttons;
 	if(pad->processing_command) {
 		goto ack;
 	}
 	switch(byte) {
 	case CMD_READ_BUTTONS:
 		pad->processing_command = true;
-		buttons = pad->host.poll(pad->host.data, PAD_INDEX(pad, pads));
-		uint16_t btn_data = AS_UINT16(buttons);
+		uint16_t buttons = pad->host.poll(pad->host.data);
 		// ignore analog mode for now
 		pad->resp.off = 0;
 		if(pad->config_mode) {
-			uint8_t resp[] = { DUALSHOCK_ID(pad), 0x5a, btn_data & 0xff, btn_data >> 8, 0x80, 0x80, 0x80, 0x80 };
+			uint8_t resp[] = { DUALSHOCK_ID(pad), 0x5a, buttons & 0xff, buttons >> 8, 0x80, 0x80, 0x80, 0x80 };
 			memcpy(pad->resp.buf, resp, sizeof(resp));
 			pad->resp.nbytes = 8;
 		} else {
-			uint8_t resp[] = { DUALSHOCK_ID(pad), 0x5a, btn_data & 0xff, btn_data >> 8 };
+			uint8_t resp[] = { DUALSHOCK_ID(pad), 0x5a, buttons & 0xff, buttons >> 8 };
 			memcpy(pad->resp.buf, resp, sizeof(resp));
 			pad->resp.nbytes = 4;
 		}

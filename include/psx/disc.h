@@ -12,17 +12,6 @@ enum {
 	PSX_DT_AUDIO
 };
 
-typedef struct psx_disc_mode {
-	bool is_cdda: 1;
-	bool autopause: 1;
-	bool report: 1;
-	bool xa_filter: 1;
-	bool ignore_sector_size: 1;
-	bool sector_size: 1;
-	bool xa_mode: 1;
-	bool double_speed: 1;
-} psx_disc_mode_t;
-
 typedef struct {
 	uint8_t m, s, f;
 } psx_disc_msf_t;

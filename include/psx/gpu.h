@@ -130,33 +130,7 @@ struct psx_renderer {
 
 struct psx_gpu {
 	uint32_t gpuread;
-	struct {
-		uint32_t tx_base: 4;
-		uint32_t ty_base1: 1;
-		uint32_t semi_transparency: 2;
-		enum psx_gpu_texdepth tex_page_colors: 2;
-		uint32_t dither_mode: 1;
-		uint32_t display_draw: 1;
-		bool set_mask: 1;
-		bool use_mask: 1;
-		uint32_t interlace_field: 1;
-		uint32_t screen_hflip: 1;
-		uint32_t ty_base2: 1;
-		uint32_t hres2: 1;
-		uint32_t hres1: 2;
-		uint32_t vres: 1;
-		enum psx_gpu_vmode video_mode: 1;
-		enum psx_gpu_dpydepth display_color_depth: 1;
-		uint32_t vinterlace: 1;
-		bool display_disable: 1;
-		uint32_t irq: 1;
-		uint32_t dma_request: 1;
-		uint32_t cmd_ready: 1;
-		uint32_t vram_ready: 1;
-		uint32_t dma_ready: 1;
-		enum psx_gpu_dmadir dma_direction: 2;
-		bool scanline_odd: 1;
-	} gpustat;
+	uint32_t gpustat;
 	struct {
 		union {
 			psx_gpucmdfn_t update;
@@ -191,12 +165,6 @@ struct psx_gpu {
 		uint16_t off_x;
 		uint16_t off_y;
 	} tex_window;
-	bool rect_x_flip;
-	bool rect_y_flip;
-	struct {
-		bool hblanking: 1;
-		bool vblanking: 1;
-	} draw_state;
 	struct {
 		uint16_t start_x;
 		uint16_t start_y;
@@ -208,14 +176,12 @@ struct psx_gpu {
 		uint16_t* texels;
 	} blit_state;
 	int scanline_count;
-	uint32_t clocks;
-	struct psx_system* sys;
 	struct psx_renderer renderer;
+	struct psx_system* sys;
 };
 
 void psx_gpu_init(struct psx_gpu* gpu);
 void psx_gpu_reset(struct psx_gpu* gpu);
-void psx_gpu_update(struct psx_gpu* gpu, float clocks);
 
 uint32_t psx_gpu_read32(struct psx_region* reg, uint32_t addr);
 void psx_gpu_write32(struct psx_region* reg, uint32_t addr, uint32_t val);

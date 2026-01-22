@@ -3,6 +3,7 @@
 #include "pad.h"
 #include "backupunit.h"
 #include "log.h"
+#include "rdef/cdrom.h"
 
 #include <stdbool.h>
 
@@ -99,7 +100,11 @@ void psx_system_remove_mcd(struct psx_system* sys, int port) {
 }
 
 void psx_system_set_tray_open(struct psx_system* sys, bool opened) {
-	sys->cdrom->state.shell_open = opened;
+	if(opened) {
+		sys->cdrom->state |= STAT_SHELL_OPEN;
+	} else {
+		sys->cdrom->state &= ~STAT_SHELL_OPEN;
+	}
 }
 
 void psx_system_insert_disc(struct psx_system* sys, struct psx_disc* disc) {

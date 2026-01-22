@@ -7,23 +7,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-struct psx_ctr {
+struct __attribute__((packed)) psx_ctr  {
 	uint32_t base;
-	struct {
-		bool sync_enable: 1;
-		uint32_t sync_mode: 2;
-		bool reset_on_target: 1;
-		bool irq_on_target: 1;
-		bool irq_on_max: 1;
-		bool irq_repeat: 1;
-		bool irq_toggle: 1;
-		uint32_t clk_source: 2;
-		bool no_irq: 1;
-		bool target_reached: 1;
-		bool max_reached: 1;
-		uint32_t unk: 3;
-		uint16_t pad;
-	} mode;
+	uint16_t mode;
 	uint32_t target;
 	uint32_t pad;
 };
@@ -41,7 +27,6 @@ struct psx_timer {
 };
 
 void psx_tmr_init(struct psx_timer* tmr);
-void psx_tmr_tick(struct psx_timer* tmr, int clocks);
 // vblank/hblank tick events
 void psx_tmr_hsync(struct psx_timer* tmr); 
 void psx_tmr_vsync(struct psx_timer* tmr); 

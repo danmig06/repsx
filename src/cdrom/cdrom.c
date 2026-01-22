@@ -6,6 +6,7 @@
 #include "cmd.h"
 #include "../util.h"
 #include "../log.h"
+#include "../rdef/cdrom.h"
 
 void psx_cdr_init(struct psx_cdrom* cdr) {
 	psx_cdr_reset(cdr);
@@ -13,22 +14,21 @@ void psx_cdr_init(struct psx_cdrom* cdr) {
 
 void psx_cdr_reset(struct psx_cdrom* cdr) {
 	memset(&cdr->regs, 0, sizeof(cdr->regs));
-	AS_UINT8(cdr->state) = 0;
 	cdr->data_queue  = queue_create(PSX_CDROM_DATABUF_SIZE);
 	cdr->resp_queue  = queue_create(PSX_CDROM_RESPBUF_SIZE);
 	cdr->param_queue = queue_create(PSX_CDROM_PARMBUF_SIZE);
-	cdr->regs.ctrl.param_empty = true;
-	cdr->regs.ctrl.param_wr_ready = true;
+	cdr->state = 0;
+	cdr->regs.ctrl = CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
 	cdr->loc = 0;
 	cdr->report_absolute = false;
 }
 
 static void cdr_push_param(struct psx_cdrom* cdr, uint8_t pb) {
 	queue_push(cdr->param_queue, pb);
-	cdr->regs.ctrl.param_empty = false;
+	cdr->regs.ctrl &= ~CTRL_PARAM_EMPTY;
 
 	if(queue_full(cdr->param_queue)) {
-		cdr->regs.ctrl.param_wr_ready = false;
+		cdr->regs.ctrl &= ~CTRL_PARAM_READY;
 	}
 }
 
@@ -36,7 +36,7 @@ static uint8_t cdr_pop_response(struct psx_cdrom* cdr) {
 	uint8_t rb = queue_pop(cdr->resp_queue);
 
 	if(queue_empty(cdr->resp_queue)) {
-		cdr->regs.ctrl.result_ready = false;
+		cdr->regs.ctrl &= ~CTRL_RESULT_READY;
 	}
 	return rb;
 }
@@ -45,7 +45,7 @@ static uint8_t cdr_pop_data(struct psx_cdrom* cdr) {
 	uint8_t rb = queue_pop(cdr->data_queue);
 
 	if(queue_empty(cdr->data_queue)) {
-		cdr->regs.ctrl.data_request = false;
+		cdr->regs.ctrl &= ~CTRL_DATA_REQUEST;
 	}
 	return rb;
 }
@@ -62,7 +62,7 @@ void cdr_bank0_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		break;
 	case 3:
 		// log_trace("CDROM: HPCHCTL write (%02x)", val);
-		AS_UINT8(cdr->regs.hphc_ctrl) = val;
+		cdr->regs.hchp_ctrl = val;
 		break;
 	default:
 		break;
@@ -76,7 +76,7 @@ void cdr_bank1_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		break;
 	case 2:
 		// printf("CDROM: IRQ mask set (%02x)", val);
-		AS_UINT8(cdr->regs.irq_mask) = val;
+		cdr->regs.irq_mask = val;
 		break;
 	case 3:
 		/*
@@ -89,7 +89,7 @@ void cdr_bank1_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		AS_UINT8(value) = val;
 		*/
 		// printf("CDROM: IRQ acknowledged (%02x)", val);
-		AS_UINT8(cdr->regs.irq_status) &= ~(val & 0x1f);
+		cdr->regs.irq_status &= ~(val & (INT_FLAGS | INT_BFEMPT | INT_BFWRDY));
 		break;
 	default:
 		break;
@@ -107,7 +107,7 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 	switch(register_offset) {
 	case 0:
 		// log_trace("CDROM: control register read (%02x)", AS_UINT8(cdr->regs.ctrl));
-		return AS_UINT8(cdr->regs.ctrl);
+		return cdr->regs.ctrl;
 	case 1:
 		log_debug("CDROM: response read (%02x)", queue_peek(cdr->resp_queue));
 		return cdr_pop_response(cdr);
@@ -116,12 +116,12 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 		cdr->regs.rd_data = cdr_pop_data(cdr);
 		return cdr->regs.rd_data;
 	case 3:
-		if(cdr->regs.ctrl.address & 1) {
-			log_trace("CDROM: IRQ status read (%02x)", AS_UINT8(cdr->regs.irq_status));
-			return AS_UINT8(cdr->regs.irq_status) | 0xe0;
+		if(CTRL_BANK_GET(cdr->regs.ctrl)) {
+			log_trace("CDROM: IRQ status read (%02x)", cdr->regs.irq_status);
+			return cdr->regs.irq_status | 0xe0;
 		} else {
 			// printf("CDROM: IRQ mask read (%02x)", AS_UINT8(cdr->regs.irq_mask));
-			return AS_UINT8(cdr->regs.irq_mask);
+			return cdr->regs.irq_mask;
 		}
 		break;
 	default:
@@ -134,11 +134,11 @@ void psx_cdr_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	struct psx_cdrom* cdr = reg->peripheral;
 	uint32_t register_offset = addr - reg->start;
 	if(register_offset == 0) {
-		cdr->regs.ctrl.address = val & 0x3;
+		CTRL_BANK_SET(cdr->regs.ctrl, val);
 		return;
 	}
 
-	switch(cdr->regs.ctrl.address) {
+	switch(CTRL_BANK_GET(cdr->regs.ctrl)) {
 	case 0:
 		cdr_bank0_write(cdr, register_offset, val);
 		break;

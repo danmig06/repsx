@@ -7,6 +7,7 @@
 #include <limits.h>
 
 #include "util.h"
+#include "rdef/timer.h"
 
 #define CHECK_TARGET(tmr, i, ts) do { \
 		if((ts - tmr->tstatus[i].start_ts) >= tmr->tstatus[i].end_ts) { \
@@ -108,17 +109,17 @@ static void handle_target(struct psx_timer* tmr, int i) {
 	uint32_t count = getcount(tmr, i);
 
 	if(tmr->tstatus[i].count_to_target) {
-		tmr->t[i].mode.target_reached = true;
-		if(tmr->t[i].mode.reset_on_target) {
+		tmr->t[i].mode |= MODE_TARGET_REACHED;
+		if(tmr->t[i].mode & MODE_RESET_ON_TARGET) {
 			count -= tmr->t[i].target;
 		}
-		if(tmr->t[i].mode.irq_on_target) {
+		if(tmr->t[i].mode & MODE_IRQ_ON_TARGET) {
 			irq = true;
 		}
 	} else {
-		tmr->t[i].mode.max_reached = true;
+		tmr->t[i].mode |= MODE_MAX_REACHED;
 		count -= 0xffff;
-		if(tmr->t[i].mode.irq_on_max) {
+		if(tmr->t[i].mode & MODE_IRQ_ON_MAX) {
 			irq = true;
 		}
 	}
@@ -129,16 +130,16 @@ static void handle_target(struct psx_timer* tmr, int i) {
 		return;
 	}
 
-	if(tmr->t[i].mode.irq_toggle) {
-		tmr->t[i].mode.no_irq ^= true;
+	if(tmr->t[i].mode & MODE_IRQ_TOGGLE) {
+		tmr->t[i].mode ^= MODE_NO_IRQ;
 	} else {
-		tmr->t[i].mode.no_irq = false;
+		tmr->t[i].mode &= ~MODE_NO_IRQ;
 	}
 
 	// timings are inaccurate, this might be unstable for some games, in that case:
 	// return;
-	bool trigger = !tmr->t[i].mode.no_irq;
-	if(!tmr->t[i].mode.irq_repeat) {
+	bool trigger = (tmr->t[i].mode & MODE_NO_IRQ) == 0;
+	if(!(tmr->t[i].mode & MODE_IRQ_REPEAT)) {
 		if(trigger && !tmr->tstatus[i].irq_triggered) {
 			tmr->tstatus[i].irq_triggered = true;
 		} else {
@@ -146,7 +147,7 @@ static void handle_target(struct psx_timer* tmr, int i) {
 		}
 	}
 
-	tmr->t[i].mode.no_irq = true;
+	tmr->t[i].mode |= MODE_NO_IRQ;
 
 	if(trigger) {
 		log_trace("timer%d: IRQ triggered\n", i);
@@ -163,17 +164,17 @@ static void tmr_update(struct psx_timer* tmr) {
 }
 
 void psx_tmr_hsync(struct psx_timer* tmr) {
-	if(!tmr->t[0].mode.sync_enable) {
+	if((tmr->t[0].mode & MODE_SYNC_EN) == 0) {
 		return;
 	}
-	switch(tmr->t[0].mode.sync_mode) {
+	switch(MODE_SYNC_GET(tmr->t[0].mode)) {
 	case 1:
 	case 2:
 		setcount(tmr, 0, 0);
 		schedule_next(tmr);
 		break;
 	case 3:
-		tmr->t[0].mode.sync_enable = false;
+		tmr->t[0].mode &= ~MODE_SYNC_EN;
 		break;
 	default:
 		break;
@@ -181,17 +182,17 @@ void psx_tmr_hsync(struct psx_timer* tmr) {
 }
 
 void psx_tmr_vsync(struct psx_timer* tmr) {
-	if(!tmr->t[1].mode.sync_enable) {
+	if((tmr->t[1].mode & MODE_SYNC_EN) == 0) {
 		return;
 	}
-	switch(tmr->t[1].mode.sync_mode) {
+	switch(MODE_SYNC_GET(tmr->t[1].mode)) {
 	case 1:
 	case 2:
 		setcount(tmr, 1, 0);
 		schedule_next(tmr);
 		break;
 	case 3:
-		tmr->t[1].mode.sync_enable = false;
+		tmr->t[1].mode &= ~MODE_SYNC_EN;
 		break;
 	default:
 		break;
@@ -199,38 +200,39 @@ void psx_tmr_vsync(struct psx_timer* tmr) {
 }
 
 static inline void update_mode(struct psx_timer* tmr, uint32_t idx) {
-	tmr->t[idx].mode.target_reached = false;
-	tmr->t[idx].mode.max_reached = false;
-	tmr->t[idx].mode.no_irq = true;
+	tmr->t[idx].mode &= ~(MODE_TARGET_REACHED | MODE_MAX_REACHED);
+	tmr->t[idx].mode |= MODE_NO_IRQ;
 	tmr->tstatus[idx].irq_triggered = false;
 
+	int clk_source = MODE_CLK_SRC_GET(tmr->t[idx].mode);
 	switch(idx) {
 	case 0:
-		if(tmr->t[idx].mode.clk_source & 1) {
+		if(clk_source & 1) {
 			tmr->tstatus[idx].rate = 5;
 		} else {
 			tmr->tstatus[idx].rate = 1;
 		}
 		break;
 	case 1:
-		if(tmr->t[idx].mode.clk_source & 1) {
+		if(clk_source & 1) {
 			tmr->tstatus[idx].rate = 1629; // PSX_GPU_CLOCKS_PER_HBLANK;
 		} else {
 			tmr->tstatus[idx].rate = 1;
 		}
 		break;
 	case 2:
-		if(tmr->t[idx].mode.clk_source & 2) {
+		if(clk_source & 2) {
 			tmr->tstatus[idx].rate = 8;
 		} else {
 			tmr->tstatus[idx].rate = 1;
 		}
 
-		if(tmr->t[idx].mode.sync_enable) {
-			if(tmr->t[idx].mode.sync_mode == 0 || tmr->t[idx].mode.sync_mode == 3) {
+		if(tmr->t[idx].mode & MODE_SYNC_EN) {
+			int sync_mode = MODE_SYNC_GET(tmr->t[idx].mode);
+			if(sync_mode == 0 || sync_mode == 3) {
 				tmr->tstatus[idx].rate = 0xffffff;
 			} else {
-				tmr->t[idx].mode.sync_enable = false;
+				tmr->t[idx].mode &= ~MODE_SYNC_EN;
 			}
 		}
 	
@@ -247,7 +249,8 @@ static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
 	switch(off & 0xf) {
 	case 0:
 		tmr_update(tmr);
-		if(idx == 2 && tmr->t[idx].mode.sync_enable && (tmr->t[idx].mode.sync_mode == 0 || tmr->t[idx].mode.sync_mode == 3)) {
+		int sync_mode = MODE_SYNC_GET(tmr->t[idx].mode);
+		if(idx == 2 && (tmr->t[idx].mode & MODE_SYNC_EN) && (sync_mode == 0 || sync_mode == 3)) {
 			val = tmr->t[idx].base;
 		} else {
 			val = getcount(tmr, idx);
@@ -257,9 +260,8 @@ static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
 		break;
 	case 4:
 		tmr_update(tmr);
-		val = AS_UINT32(tmr->t[idx].mode);
-		tmr->t[idx].mode.target_reached = false;
-		tmr->t[idx].mode.max_reached = false;
+		val = tmr->t[idx].mode;
+		tmr->t[idx].mode &= ~(MODE_TARGET_REACHED | MODE_MAX_REACHED);
 		break;
 	case 8:
 		val = tmr->t[idx].target;
@@ -283,7 +285,7 @@ static void tmr_write(struct psx_timer* tmr, uint32_t off, uint32_t val) {
 		break;
 	case 4:
 		// printf("timer%d write mode -> 0x%08x\n", off >> 4, val);
-		AS_UINT32(tmr->t[idx].mode) = (AS_UINT32(tmr->t[idx].mode) & 0xffffc00) | (val & 0x3ff);
+		tmr->t[idx].mode = (tmr->t[idx].mode & 0xffffc00) | (val & 0x3ff);
 		update_mode(tmr, idx);
 		break;
 	case 8:

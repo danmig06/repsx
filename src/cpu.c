@@ -1,18 +1,17 @@
 #include <psx/cpu.h>
 #include <psx/timer.h>
+#include <psx/irq.h>
 #include <psx/memory.h>
 
 #include "util.h"
 #include "log.h"
 #include "opcodes.h"
 #include "gte.h"
+#include "rdef/cpu.h"
 
 #include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
-
-#define CAUSE_IP  0x00000400
-#define SR_IMASK2 0x00000004
 
 #define HOOK_KCALLS
 // #define NO_LOAD_CANCELING
@@ -29,7 +28,7 @@ void psx_cpu_reset(struct psx_cpu* cpu) {
 	memset(&cpu->gte_regs, 0, sizeof(cpu->gte_regs));
 	memset(&cpu->load_slot, 0, sizeof(cpu->load_slot));
 	cpu->branch = false;
-	cpu->cop0_regs.sr.cop0_enable = true;
+	cpu->cop0_regs.sr |= SR_COP0_EN;
 	cpu->cop0_regs.prid = 2;
 }
 
@@ -198,16 +197,16 @@ static void execute(struct psx_cpu* cpu, uint32_t insn) {
 void psx_cpu_register_irq(struct psx_cpu* cpu) {
 	// write a 1 to the "Interrupt Pending" field
 	// interrupts force exceptions
-	cpu->cop0_regs.cause.ip = 1;
+	CAUSE_IP_SET(cpu->cop0_regs.cause, 1);
 }
 
 void psx_cpu_clear_irq(struct psx_cpu* cpu) {
 	// write a 0 to the "Interrupt Pending" field
-	cpu->cop0_regs.cause.ip = 0;
+	CAUSE_IP_SET(cpu->cop0_regs.cause, 0);
 }
 
 bool psx_cpu_check_irqs(struct psx_cpu* cpu) {
-	return cpu->cop0_regs.sr.ie && ((cpu->cop0_regs.sr.imask >> 2) & cpu->cop0_regs.cause.ip);
+	return (cpu->cop0_regs.sr & SR_IE) && ((SR_IMASK_GET(cpu->cop0_regs.sr) >> 2) & CAUSE_IP_GET(cpu->cop0_regs.cause));
 }
 
 void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
@@ -217,10 +216,8 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 	cpu->branch_taken = false;
 
 	uint32_t current_instruction = fetch(cpu);
-	cpu->regs.pc = cpu->next_pc;
-	cpu->next_pc += 4;
 #ifdef HOOK_KCALLS
-	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xa4) { 
+	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xa0) { 
 		switch(cpu->regs.r[9]) {
 		case 0x09:
 		case 0x3c:
@@ -235,7 +232,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 			fputs(str, stderr);
 			break;
 		case 0x40:
-			log_fatal("0x%08x: SystemErrorUnresolvedException() (ra=0x%08x, cause=0x%08x)", cpu->regs.pc, cpu->regs.ra, AS_UINT32(cpu->cop0_regs.cause));
+			log_fatal("0x%08x: SystemErrorUnresolvedException() (sr=0x%08x, cause=0x%08x)", cpu->cop0_regs.epc, cpu->cop0_regs.sr, cpu->cop0_regs.cause);
 			__asm__ volatile ("int3");
 			break;
 		case 0xa1:
@@ -245,7 +242,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 		}
 	}
 
-	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xb4) { 
+	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xb0) { 
 		switch(cpu->regs.r[9]) {
 		case 0x3b:
 		case 0x3d:
@@ -280,6 +277,8 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 	}
 	*/
 
+	cpu->regs.pc = cpu->next_pc;
+	cpu->next_pc += 4;
 	if(psx_cpu_check_irqs(cpu)) {
 		if((current_instruction & 0xfe000000) == 0x4a000000) {
 			gte_run_cmd(cpu, current_instruction);

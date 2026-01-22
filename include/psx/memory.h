@@ -39,7 +39,6 @@ struct psx_mem {
 	uint8_t* scratch;
 	struct psx_region map[PSX_MEM_NUM_REGIONS];
 	struct psx_system* sys;
-	int current_access_delay;
 };
 
 void psx_mem_init(struct psx_mem* memory);

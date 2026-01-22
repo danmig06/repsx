@@ -21,24 +21,9 @@ enum psx_irq_id {
 	PSX_IRQ_ID_PIO    = 0x400
 };
 
-typedef struct psx_irq_status {
-	bool vblank: 1;
-	bool irq: 1;
-	bool cdrom: 1;
-	bool dma: 1;
-	bool tmr0: 1;
-	bool tmr1: 1;
-	bool tmr2: 1;
-	bool bri: 1;
-	bool sio: 1;
-	bool spu: 1;
-	bool pio: 1;
-	uint32_t unused: 21;
-} psx_irq_status_t;
-
 struct psx_irq {
-	psx_irq_status_t stat;
-	psx_irq_status_t mask;
+	uint32_t stat;
+	uint32_t mask;
 
 	struct psx_system* sys;
 };

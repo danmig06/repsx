@@ -48,43 +48,6 @@ enum {
 	PSX_CPU_EXCAUSE_OVERFLOW = 0xc
 };
 
-typedef struct __psx_cop0_status {
-	bool ie: 1;
-	uint32_t ku: 1;
-	bool prev_ie: 1;
-	uint32_t prev_ku: 1;
-	bool old_ie: 1;
-	uint32_t old_ku: 1;
-	uint32_t unused: 2;
-	uint32_t imask: 8;
-	bool isc: 1;
-	uint32_t swc: 1;
-	uint32_t pz: 1;
-	uint32_t cm: 1;
-	uint32_t pe: 1;
-	uint32_t ts: 1;
-	uint32_t bev: 1;
-	uint32_t unused1: 2;
-	uint32_t re: 1;
-	uint32_t unused2: 2;
-	bool cop0_enable: 1;
-	bool cop1_enable: 1;
-	bool cop2_enable: 1;
-	bool cop3_enable: 1;
-} psx_cop0_status_t;
-
-typedef struct __psx_cop0_cause {
-	uint32_t unused: 2;
-	uint32_t ex_code: 5;
-	uint32_t unused1: 1;
-	uint32_t sw: 2;
-	uint32_t ip: 6;
-	uint32_t unused2: 12;
-	uint32_t ce: 2;
-	bool bt: 1;
-	bool bd: 1;
-} psx_cop0_cause_t;
-
 typedef union __psx_cop0_regstate {
 	struct {
 		uint32_t r0, r1, r2;
@@ -97,8 +60,8 @@ typedef union __psx_cop0_regstate {
 		uint32_t bda_mask;
 		uint32_t r10;
 		uint32_t bpc_mask;
-		psx_cop0_status_t sr;
-		psx_cop0_cause_t cause;
+		uint32_t sr;
+		uint32_t cause;
 		uint32_t epc;
 		uint32_t prid;
 	};
@@ -147,43 +110,6 @@ typedef union {
 	int16_t elements[10];
 } psx_gte_mat_t;
 
-typedef struct {
-	uint32_t real_code: 6;
-	uint32_t unused0: 4;
-	bool lm: 1;
-	uint32_t unused1: 2;
-	uint32_t translation_vec: 2;
-	uint32_t mult_vec: 2;
-	uint32_t mult_mat: 2;
-	bool sf: 1;
-	uint32_t fake_code: 5;
-	uint32_t opcode: 7;
-} psx_gte_cmd_t;
-
-typedef struct {
-	uint32_t unused: 12;
-	bool ir0_saturated: 1; // 0x0000 > IR0 || 0x1009 < IR0
-	bool sy2_saturated: 1; // -0x0400 > SY2 || 0x03ff < SY2
-	bool sx2_saturated: 1; // -0x0400 > SX2 || 0x03ff < SX2
-	bool mac0_ovf_neg: 1;
-	bool mac0_ovf_pos: 1;
-	bool div_ovf: 1; // RTPS/RTPT saturated result to 0x1ffff
-	bool z_saturated: 1; // 0x0000 > SZ3/OTZ || 0xffff < SZ3/OTZ
-	bool cb_saturated: 1; // 0x00 > B || 0xff < B
-	bool cg_saturated: 1; // 0x00 > G || 0xff < G
-	bool cr_saturated: 1; // 0x00 > R || 0xff < R
-	bool ir3_saturated: 1; // -0x8000/0x0000 > IR3 || 0x7fff < IR3
-	bool ir2_saturated: 1; // -0x8000/0x0000 > IR2 || 0x7fff < IR2
-	bool ir1_saturated: 1; // -0x8000/0x0000 > IR1 || 0x7fff < IR1
-	bool mac3_ovf_neg: 1;
-	bool mac2_ovf_neg: 1;
-	bool mac1_ovf_neg: 1;
-	bool mac3_ovf_pos: 1;
-	bool mac2_ovf_pos: 1;
-	bool mac1_ovf_pos: 1;
-	bool error: 1; // ((FLAG & 0x7f87e000) != 0) => IR3, RGB and SZ3/OTZ saturations do not count as errors
-} psx_gte_flags_t;
-
 typedef union __psx_gte_regstate {
 	struct {
 		// data registers
@@ -212,7 +138,7 @@ typedef union __psx_gte_regstate {
 		int32_t dqa;                // r59 depth cueing coefficient
 		int32_t dqb;                // r60 depth cueing offset
 		int32_t zsf3, zsf4;         // r61~62 average z scale factors
-		psx_gte_flags_t flag;       // r63 error flags
+		uint32_t flag;              // r63 error flags
 	};
 	uint32_t r[64];
 } psx_gte_regstate_t;
@@ -221,7 +147,14 @@ struct psx_cpu {
 	psx_regstate_t regs;
 	psx_cop0_regstate_t cop0_regs;
 	psx_gte_regstate_t gte_regs;
-	psx_gte_cmd_t gte_cmd;
+	struct {
+		uint32_t raw;
+		bool lm;
+		bool sf;
+		int translation_vec;
+		int mult_vec;
+		int mult_mat;
+	} gte_cmd;
 	struct {
 		unsigned target;
 		uint32_t value;

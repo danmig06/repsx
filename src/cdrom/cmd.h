@@ -31,6 +31,7 @@ enum {
 	CMD_STOP      = 0x08,
 	CMD_PAUSE     = 0x09,
 	CMD_INIT      = 0x0a,
+	CMD_MUTE      = 0x0b,
 	CMD_DEMUTE    = 0x0c,
 	CMD_SETFILTER = 0x0d,
 	CMD_SETMODE   = 0x0e,
@@ -43,6 +44,7 @@ enum {
 	CMD_TEST      = 0x19,
 	CMD_GETID     = 0x1a,
 	CMD_READS     = 0x1b,
+	CMD_READTOC   = 0x1e,
 };
 
 void cdr_run_cmd(struct psx_cdrom* cdr);

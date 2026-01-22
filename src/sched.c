@@ -60,11 +60,6 @@ void psx_sched_remove_ev(struct psx_sched* sched, uint8_t id) {
 }
 
 void psx_sched_update(struct psx_sched* sched, uint32_t clocks) {
-	if(!sched->ev_list) {
-		sched->clocks_elapsed = 0;
-		return;
-	}
-
 	sched->clocks_elapsed += clocks;
 	struct psx_sev* ev = sched->ev_list;
 	while(ev && sched->clocks_elapsed >= ev->clocks_left) {

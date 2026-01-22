@@ -4,6 +4,7 @@
 #include <psx/sched.h>
 
 #include "util.h"
+#include "rdef/gpu.h"
 #include "gpucmds.h"
 
 #include <stdbool.h>
@@ -21,33 +22,23 @@ static void gpu_vblank(struct psx_sched*, struct psx_sev*);
 
 static struct psx_sev hblank_event = {
 	.id = PSX_SEV_ID_HBLANK,
-	.clocks_left = 0,
 	.eta = CPU_CLOCKS_PER_HDRAW,
 	.trigger = gpu_hblank,
-	.next = NULL
 };
 
 static struct psx_sev hblank_end_event = {
 	.id = PSX_SEV_ID_HBLANK_END,
-	.clocks_left = 0,
 	.eta = HBLANK_DURATION,
 	.trigger = gpu_hblank_end,
-	.next = NULL
 };
 
 static struct psx_sev vblank_event = {
 	.id = PSX_SEV_ID_VBLANK,
-	.clocks_left = 0,
 	.eta = CPU_CLOCKS_PER_VSYNC,
 	.trigger = gpu_vblank,
-	.next = NULL
 };
 
 static void gpu_hblank(struct psx_sched* sched, struct psx_sev* self) {
-	struct psx_gpu* gpu = sched->sys->gpu;
-
-	gpu->draw_state.hblanking = true;
-
 	psx_tmr_hsync(sched->sys->timer);
 	psx_sched_add_ev(sched, &hblank_end_event);
 	psx_sched_remove_ev(sched, self->id);
@@ -56,11 +47,18 @@ static void gpu_hblank(struct psx_sched* sched, struct psx_sev* self) {
 static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_gpu* gpu = sched->sys->gpu;
 
-	gpu->draw_state.hblanking = false;
-	if(gpu->scanline_count < PSX_GPU_VISIBLE_SCANS_NTSC) {
-		gpu->gpustat.scanline_odd = gpu->scanline_count & 1;
+	if(!(gpu->gpustat & GPUSTAT_VINTERLACE)) {
+		if(gpu->scanline_count == PSX_GPU_VISIBLE_SCANS_NTSC - 1) {
+			gpu->gpustat ^= GPUSTAT_SCNODD;
+		}
+	} else if(gpu->scanline_count < PSX_GPU_VISIBLE_SCANS_NTSC) {
+		if(gpu->scanline_count & 1) {
+			gpu->gpustat |= GPUSTAT_SCNODD;
+		} else {
+			gpu->gpustat &= ~GPUSTAT_SCNODD;
+		}
 	} else {
-		gpu->gpustat.scanline_odd = false;
+		gpu->gpustat &= ~GPUSTAT_SCNODD;
 	}
 
 	gpu->scanline_count++;
@@ -71,9 +69,7 @@ static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_gpu* gpu = sched->sys->gpu;
 
-	gpu->draw_state.vblanking = true;
 	gpu->scanline_count = 0;
-
 	psx_tmr_vsync(sched->sys->timer);	
 	psx_irq_raise(sched->sys->irq, PSX_IRQ_ID_VBLANK);
 	gpu->renderer.update(&gpu->renderer);
@@ -94,44 +90,43 @@ void psx_gpu_reset(struct psx_gpu* gpu) {
 	memset(&gpu->tex_window, 0, sizeof(gpu->tex_window));
 	memset(&gpu->cmd, 0, sizeof(gpu->cmd));
 	memset(&gpu->draw_off, 0, sizeof(gpu->draw_off));
-	gpu->gpustat.dma_ready = true;
-	gpu->gpustat.cmd_ready = true;
-	gpu->gpustat.vram_ready = true;
+	gpu->gpustat = (GPUSTAT_DMA_READY | GPUSTAT_CMD_READY | GPUSTAT_VRAM_READY);
 }
 
 static void gpu_do_gp0(struct psx_gpu* gpu, uint32_t cmd) {
 	if(gpu->cmd.words_left == 0) {
 		memset(&gpu->cmd, 0, sizeof(gpu->cmd));
 		uint8_t cmd_num = cmd >> 24;
-		int additional_attributes = 0;
-		bool is_render_cmd = ((cmd_num >> 5) != 0) && !(cmd_num >> 7);
-		cmd_poly_flags_t poly;
-		cmd_line_flags_t line;
-		cmd_rect_flags_t rect;
+		bool is_render_cmd = (cmd_num >> 5) < 4 && (cmd_num >> 5) > 0;
+		// these attributes are always in the same positions, when used
+		bool is_textured = (cmd_num & BIT(2)) != 0;
+		bool is_gouraud_shaded = (cmd_num & BIT(4)) != 0;
 		
 		// if not, then it is a misc or blit command
 		if(is_render_cmd) {
 			switch(cmd_num >> 5) {
-			case 1:
-				AS_UINT8(poly) = cmd_num;
-				additional_attributes = poly.is_gouraud_shaded + poly.is_textured + 1;
+			case 1: {
+				bool is_quad = (cmd_num & BIT(3)) != 0;
 				// 1 color if shaded and 1 texture uv if textured for 4/3 vertices, 
 				// the first color is in the command word, so we have to account for it
-				gpu->cmd.words_left = (additional_attributes * ((poly.is_quad) ? 4 : 3)) - poly.is_gouraud_shaded;
+				int additional_attributes = is_gouraud_shaded + is_textured + 1;
+				gpu->cmd.words_left = (additional_attributes * ((is_quad) ? 4 : 3)) - is_gouraud_shaded;
 				gpu->cmd.execute = gp0_poly;
 				break;
-			case 2:
-				AS_UINT8(line) = cmd_num;
+			}
+			case 2: {
 				// 2 vertices + 1 color if gouraud shaded
-				gpu->cmd.words_left = 2 + (line.is_gouraud_shaded);
+				gpu->cmd.words_left = 2 + (is_gouraud_shaded);
 				gpu->cmd.execute = gp0_line;
 				break;
-			case 3:
-				AS_UINT8(rect) = cmd_num;
+			}
+			case 3: {
+				uint8_t geometry = (cmd_num >> 3) & 3;
 				// top-left vertex + texture uv + size descriptor if geometry is variable, CLUT/Texpage come from GPUSTAT
-				gpu->cmd.words_left = (rect.geometry == 0) + rect.is_textured + 1;
+				gpu->cmd.words_left = (geometry == 0) + is_textured + 1;
 				gpu->cmd.execute = gp0_rect;
 				break;
+			}
 			default:
 				log_error("Unhandled GP0 render command 0x%08x", cmd);
 				return;
@@ -239,7 +234,7 @@ static void update_gpuread(struct psx_gpu* gpu) {
 			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);
 			gpu->blit_state.texels = NULL;
 			gpu->gpuread = packet;
-			gpu->gpustat.vram_ready = false;
+			gpu->gpustat &= GPUSTAT_VRAM_READY;
 			return;
 		}
 		gpu->blit_state.x = gpu->blit_state.start_x;
@@ -256,7 +251,7 @@ static void update_gpuread(struct psx_gpu* gpu) {
 			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);
 			gpu->blit_state.texels = NULL;
 			gpu->gpuread = packet;
-			gpu->gpustat.vram_ready = false;
+			gpu->gpustat &= GPUSTAT_VRAM_READY;
 			return;
 		}
 		gpu->blit_state.x = gpu->blit_state.start_x;
@@ -276,7 +271,7 @@ uint32_t psx_gpu_read32(struct psx_region* reg, uint32_t addr) {
 		}
 		return gpu->gpuread;
 	} else if(register_offset == 4) {
-		return AS_UINT32(gpu->gpustat);
+		return gpu->gpustat;
 	}
 
 	return 0;
@@ -301,7 +296,7 @@ uint16_t psx_gpu_read16(struct psx_region* reg, uint32_t addr) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	uint16_t val = 0;
 
-	if(register_offset >= 0 && register_offset < 4) {
+	if(register_offset < 4) {
 		val = 0;
 	} else if(register_offset >= 4) {
 		uint8_t* regs = reg->peripheral;
@@ -314,7 +309,7 @@ uint16_t psx_gpu_read16(struct psx_region* reg, uint32_t addr) {
 void psx_gpu_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	
-	if(register_offset >= 0 && register_offset < 4) {
+	if(register_offset < 4) {
 		val = 0;
 	} else if(register_offset >= 4) {
 		uint8_t* regs = reg->peripheral;
@@ -328,7 +323,7 @@ uint8_t psx_gpu_read8(struct psx_region* reg, uint32_t addr) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	uint8_t val = 0;
 
-	if(register_offset >= 0 && register_offset < 4) {
+	if(register_offset < 4) {
 		val = 0;
 	} else if(register_offset >= 4) {
 		uint8_t* regs = reg->peripheral;
@@ -341,7 +336,7 @@ uint8_t psx_gpu_read8(struct psx_region* reg, uint32_t addr) {
 void psx_gpu_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	
-	if(register_offset >= 0 && register_offset < 4) {
+	if(register_offset < 4) {
 		val = 0;
 	} else if(register_offset >= 4) {
 		uint8_t* regs = reg->peripheral;

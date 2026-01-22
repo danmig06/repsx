@@ -1,5 +1,6 @@
 #include "gte.h"
 #include "util.h"
+#include "rdef/cpu.h"
 
 #include <stdbool.h>
 
@@ -63,7 +64,7 @@
 #define DQB cpu->gte_regs.dqb
 #define ZSF3 cpu->gte_regs.zsf3
 #define ZSF4 cpu->gte_regs.zsf4
-#define FLAG *((uint32_t*)(&cpu->gte_regs.flag))
+#define FLAG cpu->gte_regs.flag
 #define FLAG_ERR_MASK 0x7f87e000
 #define I64(v) ((int64_t)(v))
 
@@ -120,15 +121,6 @@
 #define gte_log(...) 
 #endif
 
-enum {
-	GF_SX2_SAT      = 1 << 14,
-	GF_Z_SAT        = 1 << 18,
-	GF_R_SAT        = 1 << 21,
-	GF_IR1_SAT      = 1 << 24,
-	GF_MAC1_OVF_NEG = 1 << 27,
-	GF_MAC1_OVF_POS = 1 << 30,
-};
-
 #define CHK_MAC1(expr) check_mac(cpu, 0, expr)
 #define CHK_MAC2(expr) check_mac(cpu, 1, expr)
 #define CHK_MAC3(expr) check_mac(cpu, 2, expr)
@@ -168,15 +160,16 @@ static int32_t saturate_mac(struct psx_cpu* cpu, int flag_idx, int64_t value) {
 	gte_log(stderr, "\n-> 0x%08x\n", res);
 	return res;
 }
+
 #define CHK_MAC0(expr) check_mac0(cpu, expr)
 static int64_t check_mac0(struct psx_cpu* cpu, int64_t value) {
 	gte_log(stderr, "checking MAC0 input: 0x%016lx ", value);
 	if(value < -0x80000000ll) {
-		cpu->gte_regs.flag.mac0_ovf_neg = true;
+		FLAG |= GF_MAC0_OVF_NEG;
 		gte_log(stderr, "(negative overflow)");
 		
 	} else if(value > 0x7fffffffll) {
-		cpu->gte_regs.flag.mac0_ovf_pos = true;
+		FLAG |= GF_MAC0_OVF_NEG;
 		gte_log(stderr, "(positive overflow)");
 	}
 
@@ -209,12 +202,12 @@ static int16_t check_sxy2(struct psx_cpu* cpu, int flag_idx, int64_t value) {
 static int32_t check_otz(struct psx_cpu* cpu, int32_t value) {
 	gte_log(stderr, "checking OTZ/SZ3 input: 0x%08x ", value);
 	if(value < 0) {
-		cpu->gte_regs.flag.z_saturated = true;
+		FLAG |= GF_Z_SAT;
 		gte_log(stderr, "(negative overflow)");
 
 		value = 0;
 	} else if(value > 0xffff) {
-		cpu->gte_regs.flag.z_saturated = true;
+		FLAG |= GF_Z_SAT;
 		gte_log(stderr, "(positive overflow)");
 
 		value = 0xffff;
@@ -251,12 +244,12 @@ static int32_t check_ir(struct psx_cpu* cpu, int flag_idx, int64_t value) {
 static int32_t check_ir0(struct psx_cpu* cpu, int32_t value) {
 	gte_log(stderr, "checking IR0 input: 0x%08x ", value);
 	if(value < 0) {
-		cpu->gte_regs.flag.ir0_saturated = true;
+		FLAG |= GF_IR0_SAT;
 		gte_log(stderr, "(negative overflow)");
 
 		value = 0;
 	} else if(value > 0x1000) {
-		cpu->gte_regs.flag.ir0_saturated = true;
+		FLAG |= GF_IR0_SAT;
 		gte_log(stderr, "(positive overflow)");
 
 		value = 0x1000;
@@ -272,12 +265,12 @@ static int32_t check_ir0(struct psx_cpu* cpu, int32_t value) {
 static uint8_t check_rgb(struct psx_cpu* cpu, int flag_idx, int32_t value) {
 	gte_log(stderr, "checking %c input: 0x%08x ", "RGB"[flag_idx], value);
 	if (value < 0) {
-		FLAG |= GF_R_SAT >> flag_idx;
+		FLAG |= GF_CR_SAT >> flag_idx;
 		gte_log(stderr, "(negative overflow)");
 
 		value = 0;
 	} else if(value > 0xff) {
-		FLAG |= GF_R_SAT >> flag_idx;
+		FLAG |= GF_CR_SAT >> flag_idx;
 		gte_log(stderr, "(positive overflow)");
 
 		value = 0xff;
@@ -355,7 +348,7 @@ static uint8_t g_unr_table[] = {
 
 static inline uint32_t unr_divide(struct psx_cpu* cpu, uint64_t n, uint64_t d) {
 	if(n >= d * 2) {
-		cpu->gte_regs.flag.div_ovf = true;
+		FLAG |= GF_DIV_OVF;
 		return 0x1ffff;
 	}
 
@@ -367,26 +360,6 @@ static inline uint32_t unr_divide(struct psx_cpu* cpu, uint64_t n, uint64_t d) {
 	d = (0x0000080 + (d * u)) >> 8;
 	return MIN(0x1ffff, ((n * d) + 0x8000) >> 16);
 }
-
-/*
-static inline uint32_t unr_divide(struct psx_cpu* cpu, uint16_t n, uint16_t d) {
-	if (n >= d * 2) {
-	    cpu->gte_regs.flag.div_ovf = true;
-
-            return 0x1ffff;
-	}
-	int shift = lzc(d) - 16;
-
-	int r1 = (d << shift) & 0x7fff;
-	int r2 = g_unr_table[((r1 + 0x40) >> 7)] + 0x101;
-	int r3 = ((0x80 - (r2 * (r1 + 0x8000))) >> 8) & 0x1ffff;
-
-	uint32_t reciprocal = ((r2 * r3) + 0x80) >> 8;
-	uint32_t res = ((((uint64_t)reciprocal * (n << shift)) + 0x8000) >> 16);
-
-	return MIN(0x1ffff, res);
-}
-*/
 
 static void avsz3(struct psx_cpu* cpu) {
 	int64_t avg = I64((int16_t)ZSF3) * (SZ(1) + SZ(2) + SZ(3));
@@ -400,8 +373,6 @@ static void avsz4(struct psx_cpu* cpu) {
 	OTZ = CHK_OTZ(avg >> 12);
 }
 
-// only MAC0 comes out wrong at the end sometimes, which will eventually cause wrong SXY2 results
-// amidog reports ~12000 successful tests before giving up, looks like it could be UNR division
 static void rtps(struct psx_cpu* cpu, int vi, bool finalize) {
 	int64_t vx = I64(VX(vi));
 	int64_t vy = I64(VY(vi));
@@ -420,22 +391,13 @@ static void rtps(struct psx_cpu* cpu, int vi, bool finalize) {
 	int32_t new_ir3_sf = in_mac3 >> (SF * 12);
 	int32_t new_ir3_shift = in_mac3 >> 12;
 	if(new_ir3_shift < -((int32_t)0x8000) || new_ir3_shift > 0x7fff) {
-		cpu->gte_regs.flag.ir3_saturated = true;
+		FLAG |= GF_IR3_SAT;
 	}
 	IR(3) = SAT(new_ir3_sf, (!LM) ? -((int32_t)0x8000) : 0, 0x7fff);
 
 	SZ_SHIFT();
 	SZ(3) = CHK_SZ3(in_mac3 >> 12);
 	int32_t perspective_factor = unr_divide(cpu, H, SZ(3));
-	/*
-	if(H < (SZ(3) * 2)) {
-		perspective_factor = unr_divide(cpu, H, SZ(3));
-	} else {
-		perspective_factor = 0x1ffff;
-		cpu->gte_regs.flag.div_ovf = true;
-	}
-	*/
-
 	gte_log(stderr, "UNR division (0x%x / 0x%x) returned 0x%x\n", H, SZ(3), perspective_factor);
 
 	SXY_SHIFT();
@@ -844,7 +806,9 @@ uint32_t gte_read_register(struct psx_cpu* cpu, uint32_t idx) {
 	case 15:
 		return cpu->gte_regs.sxy[2].xy;
 	case 63:
-		cpu->gte_regs.flag.error = (FLAG & FLAG_ERR_MASK) != 0;
+		if((FLAG & FLAG_ERR_MASK) != 0) {
+			FLAG |= GF_ERROR;
+		}
 		break;
 	default:
 		break;
@@ -885,10 +849,15 @@ void gte_write_register(struct psx_cpu* cpu, uint32_t idx, uint32_t val) {
 }
 
 void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
-	AS_UINT32(cpu->gte_cmd) = insn;
+	cpu->gte_cmd.raw = insn;
+	cpu->gte_cmd.lm = (cpu->gte_cmd.raw & CMD_LM) != 0;
+	cpu->gte_cmd.sf = (cpu->gte_cmd.raw & CMD_SF) != 0;
+	cpu->gte_cmd.translation_vec = CMD_TX_GET(cpu->gte_cmd.raw);
+	cpu->gte_cmd.mult_vec = CMD_VX_GET(cpu->gte_cmd.raw);
+	cpu->gte_cmd.mult_mat = CMD_MX_GET(cpu->gte_cmd.raw);
 	char* name = NULL;
 	FLAG = 0;
-	switch(cpu->gte_cmd.real_code) {
+	switch(CMD_RCODE_GET(cpu->gte_cmd.raw)) {
 	case GTE_RC_RTPS: rtps(cpu, 0, true); cpu->clocks = 15; return;
 	case GTE_RC_RTPT:
 		rtps(cpu, 0, false);

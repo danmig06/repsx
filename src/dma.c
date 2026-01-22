@@ -4,13 +4,13 @@
 #include <string.h>
 
 #include "util.h"
+#include "rdef/dma.h"
 #include "log.h"
-#define DMACTL_CHNPRIORITY(dmactl, c) ((AS_UINT32(dmactl) >> (c * 4)) & 7)
 #define CHCR_MASK 0x71770503
 #define OTC_CHCR_MASK 0x50000002
-#define DMACHN_IRQ(dmac, id) (((dmac->regs.dmairq.chn_irq) >> (id)) & 1)
-#define DMACHN_ENABLED(dmac, id) (((dmac->regs.dmairq.chn_irq_mask) >> (id)) & 1)
-#define DMAIRQ_WRITE_MASK 0x00ff807f
+#define DMACHN_IRQ(dmac, id) ((DICR_CHNFLAGS_GET(dmac->regs.dicr) >> (id)) & 1)
+#define DMACHN_ENABLED(dmac, id) ((DICR_CHNMASK_GET(dmac->regs.dicr) >> (id)) & 1)
+#define DICR_WRITE_MASK 0x00ff807f
 
 enum dmachnidx_t {
 	DMACHN_MDECIN  = 0,
@@ -31,8 +31,8 @@ struct copyvec {
 
 void psx_dmac_init(struct psx_dmac* dmac) {
 	memset(dmac, 0, sizeof(*dmac));
-	AS_UINT32(dmac->regs.dmactl) = 0x07654321;
-	dmac->regs.dmairq.chn_irq = 1;
+	dmac->regs.dpcr = 0x07654321;
+	DICR_CHNFLAGS_SET(dmac->regs.dicr, 1);
 }
 
 uint32_t psx_dmac_read32(struct psx_region* reg, uint32_t addr) {
@@ -45,19 +45,25 @@ uint32_t psx_dmac_read32(struct psx_region* reg, uint32_t addr) {
 	return val;
 }
 
-static void write_dmairq(struct psx_dmac* dmac, uint32_t val) {
-	uint8_t updated_flags = dmac->regs.dmairq.chn_irq & ~(val >> 24);
-	val &= DMAIRQ_WRITE_MASK;
-	AS_UINT32(dmac->regs.dmairq) = (AS_UINT32(dmac->regs.dmairq) & ~(DMAIRQ_WRITE_MASK)) | val;
-	dmac->regs.dmairq.chn_irq = updated_flags;
-	dmac->regs.dmairq.master_irq = dmac->regs.dmairq.master_irq_enable && (dmac->regs.dmairq.chn_irq & dmac->regs.dmairq.chn_irq_mask) != 0;
+static void write_dicr(struct psx_dmac* dmac, uint32_t val) {
+	uint8_t prev_flags = DICR_CHNFLAGS_GET(dmac->regs.dicr);
+	uint8_t updated_flags = prev_flags & ~(val >> 24);
+	val &= DICR_WRITE_MASK;
+	dmac->regs.dicr = (dmac->regs.dicr & ~DICR_WRITE_MASK) | val;
+	DICR_CHNFLAGS_SET(dmac->regs.dicr, updated_flags);
+	uint8_t mask = DICR_CHNMASK_GET(dmac->regs.dicr);
+	if((dmac->regs.dicr & DICR_IRQ_EN) && (updated_flags & mask) != 0) {
+		dmac->regs.dicr |= DICR_IRQ;
+	} else {
+		dmac->regs.dicr &= ~DICR_IRQ;
+	}
 }
 
 void psx_dmac_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 	uint32_t register_offset = addr - reg->start;
 	
 	if(register_offset == 0x74) {
-		write_dmairq(reg->peripheral, val);
+		write_dicr(reg->peripheral, val);
 	} else {
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
@@ -83,7 +89,7 @@ void psx_dmac_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 
 	if(register_offset >= 0x74 && 0x78 > register_offset) {
 		int shift = register_offset - 0x74;
-		write_dmairq(reg->peripheral, ((uint32_t)val) << (shift * 8));
+		write_dicr(reg->peripheral, ((uint32_t)val) << (shift * 8));
 	} else {
 		uint8_t* regs = reg->peripheral;
 		memcpy(&regs[register_offset], &val, sizeof(val));
@@ -104,7 +110,7 @@ void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	uint32_t register_offset = addr - reg->start;
 	if(register_offset >= 0x74 && 0x78 > register_offset) {
 		int shift = register_offset - 0x74;
-		write_dmairq(reg->peripheral, ((uint32_t)val) << (shift * 8));
+		write_dicr(reg->peripheral, ((uint32_t)val) << (shift * 8));
 	} else {
 		uint8_t* regs = reg->peripheral;
 		regs[register_offset] = val;
@@ -116,7 +122,7 @@ void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 }
 
 uint32_t transfer_size(psx_dma_channel_t chn) {
-	switch(chn.ctrl.trn_mode) {
+	switch(CHCR_MODE_GET(chn.ctrl)) {
 	case PSX_DMA_SYNC_MANUAL:
 		if(chn.bc.n_words == 0) {
 			return 0x10000;
@@ -130,10 +136,10 @@ uint32_t transfer_size(psx_dma_channel_t chn) {
 }
 
 bool is_triggered(psx_dma_channel_t* chn) {
-	if(chn->ctrl.trn_mode == PSX_DMA_SYNC_MANUAL) {
-		return chn->ctrl.trn_start && chn->ctrl.force_trn_start;
+	if(CHCR_MODE_GET(chn->ctrl) == PSX_DMA_SYNC_MANUAL) {
+		return (chn->ctrl & CHCR_START) && (chn->ctrl & CHCR_FORCE);
 	}
-	return chn->ctrl.trn_start;
+	return (chn->ctrl & CHCR_START) != 0;
 }
 
 uint32_t fetch_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum dmachnidx_t channel) {
@@ -200,10 +206,10 @@ void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	struct copyvec copy_state;
 	copy_state.words_left = transfer_size(*chn);
 	copy_state.addr = start_addr;
-	copy_state.increment = (chn->ctrl.addr_inc) ? -4 : 4;
+	copy_state.increment = (chn->ctrl & CHCR_INC) ? -4 : 4;
 
 	uint32_t src;
-	if(chn->ctrl.dir == PSX_DMA_DIR_TO_RAM) {
+	if((chn->ctrl & CHCR_DIR) == PSX_DMA_DIR_TO_RAM) {
 		while(copy_state.words_left > 0) {
 			src = fetch_word_dev(dmac, &copy_state, channel);
 			psx_mem_write32(dmac->sys->memory, copy_state.addr, src);
@@ -230,7 +236,7 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	}
 
 	psx_dma_channel_t chn = dmac->regs.chn[channel];
-	if(chn.ctrl.dir != PSX_DMA_DIR_FROM_RAM) {
+	if((chn.ctrl & CHCR_DIR) != PSX_DMA_DIR_FROM_RAM) {
 		panic("invalid linked list transfer");
 	}
 
@@ -256,91 +262,69 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		}
 
 		addr = list_header & 0x1ffffc;
-		dmac->gpu_irq_delay++;
 	}
 }
 
 void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
+	if(channel == DMACHN_OTC) {
+		// OTC is hardwired differently, it needs special handling
+		// chn[7].bit1 is hardwired to 1
+		chn->ctrl |= CHCR_INC;
+		// transfer mode is not factored in so we treat it as manual,
+		// since it actually is a garbage value it will be cleared later
+		CHCR_MODE_SET(chn->ctrl, PSX_DMA_SYNC_MANUAL);
+		chn->ctrl &= ~CHCR_DIR;
+		if(!(DPCR_EN_GET(dmac->regs.dpcr, DMACHN_OTC) && is_triggered(chn))) {
+			chn->ctrl &= OTC_CHCR_MASK;
+			return;
+		}
+		chn->ctrl &= OTC_CHCR_MASK;
+	} else if(!(DPCR_EN_GET(dmac->regs.dpcr, channel) && is_triggered(chn))) {
+		return;
+	}
+
 	switch(channel) {
 	case DMACHN_MDECIN:
-		if(!(dmac->regs.dmactl.mdecin_en && is_triggered(chn))) {
-			return;
-		}
-
 		log_error("Unhandled DMACHN_MDECIN transfer (IRQ triggered)");
-		// dmac->regs.dmactl.mdecin_en = false;
-		chn->ctrl.force_trn_start = false;
+		// dmac->regs.dpcr.mdecin_en = false;
+		chn->ctrl &= ~CHCR_FORCE;
 		break;
 	case DMACHN_MDECOUT:
-		if(!(dmac->regs.dmactl.mdecout_en && is_triggered(chn))) {
-			return;
-		}
-
 		log_error("Unhandled DMACHN_MDECOUT transfer (IRQ triggered)");
-		// dmac->regs.dmactl.mdecout_en = false;
-		chn->ctrl.force_trn_start = false;
+		// dmac->regs.dpcr.mdecout_en = false;
+		chn->ctrl &= ~CHCR_FORCE;
 		break;
 	case DMACHN_GPU:
-		if(!(dmac->regs.dmactl.gpu_en && is_triggered(chn))) {
-			return;
-		}
-		
-		if(chn->ctrl.trn_mode != PSX_DMA_SYNC_LINKEDLIST) {
-			chn->ctrl.force_trn_start = false;
-			dmac->gpu_irq_delay = transfer_size(*chn);
+		if(CHCR_MODE_GET(chn->ctrl) != PSX_DMA_SYNC_LINKEDLIST) {
+			chn->ctrl &= ~CHCR_FORCE;
 			do_dev_blkcopy(dmac, channel);
 		} else {
 			do_dev_linked_list(dmac, channel);
 		}
 		break;
 	case DMACHN_CDROM:
-		if(!(dmac->regs.dmactl.cdrom_en && is_triggered(chn))) {
-			return;
-		}
-
-		if(chn->ctrl.dir == PSX_DMA_DIR_TO_RAM) {
-			chn->ctrl.force_trn_start = false;
+		if((chn->ctrl & CHCR_DIR) == PSX_DMA_DIR_TO_RAM) {
+			chn->ctrl &= ~CHCR_FORCE;
 			do_dev_blkcopy(dmac, channel);
 		} else {
 			log_error("Unhandled DMACHN_CDROM transfer");
 		}
 		break;
 	case DMACHN_SPU:
-		if(!(dmac->regs.dmactl.spu_en && is_triggered(chn))) {
-			return;
-		}
-
 		// many games won't start if they get no feedback
 		log_error("Unhandled DMACHN_SPU transfer (IRQ triggered)");
-		chn->ctrl.force_trn_start = false;
+		chn->ctrl &= ~CHCR_FORCE;
+		// CAUTION: Dead or Alive uses sound RAM to store pointers and
+		// other sensitive stuff, and will crash after some amount of time
+		// during a battle
+		chn->start_addr += transfer_size(*chn) * ((chn->ctrl & CHCR_INC) ? -1 : 1);
 		break;
 	case DMACHN_PIO:
-		if(!(dmac->regs.dmactl.pio_en && is_triggered(chn))) {
-			return;
-		}
-
 		log_error("Unhandled DMACHN_PIO transfer");
-		dmac->regs.dmactl.pio_en = false;
 		break;
 	case DMACHN_OTC:
-		// OTC is hardwired differently, though the masks overlap
-		// chn[7].bit2 is hardwired to 1
-		chn->ctrl.addr_inc = true;
-		// transfer mode is not factored in so we treat it as manual,
-		// since it actually is a garbage value it will be cleared later
-		chn->ctrl.trn_mode = PSX_DMA_SYNC_MANUAL;
-		chn->ctrl.dir = PSX_DMA_DIR_TO_RAM;
-		if(!(dmac->regs.dmactl.otc_en && is_triggered(chn))) {
-			AS_UINT32(chn->ctrl) &= OTC_CHCR_MASK;
-			return;
-		}
-
-		AS_UINT32(chn->ctrl) &= OTC_CHCR_MASK;
-
-		// cleared on start
-		chn->ctrl.force_trn_start = false;
-		dmac->otc_irq_delay = transfer_size(*chn);
+		chn->ctrl &= ~CHCR_FORCE;
 		do_dev_blkcopy(dmac, channel);
 		break;
 	default:
@@ -349,16 +333,18 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	}
 
 	// cleared on completion
-	chn->ctrl.trn_start = false;
+	chn->ctrl &= ~CHCR_START;
 	
-	if(dmac->regs.dmairq.bus_error) {
-		dmac->regs.dmairq.master_irq = true;
+	if(dmac->regs.dicr & DICR_BUSERROR) {
+		dmac->regs.dicr |= DICR_IRQ;
 	}
 
-	if(dmac->regs.dmairq.master_irq_enable && DMACHN_ENABLED(dmac, channel) && !DMACHN_IRQ(dmac, channel)) {
-		dmac->regs.dmairq.master_irq = true;
-		dmac->regs.dmairq.chn_irq |= 1 << channel;
-		// log_trace(stderr, "DMA IRQ raised");
+	if((dmac->regs.dicr & DICR_IRQ_EN) && DMACHN_ENABLED(dmac, channel) && !DMACHN_IRQ(dmac, channel)) {
+		dmac->regs.dicr |= DICR_IRQ;
+		int flags = DICR_CHNFLAGS_GET(dmac->regs.dicr);
+		flags |= 1 << channel;
+		DICR_CHNFLAGS_SET(dmac->regs.dicr, flags);
+		// log_error("DMA IRQ raised");
 		psx_irq_raise(dmac->sys->irq, PSX_IRQ_ID_DMA);
 	}
 }
@@ -367,7 +353,7 @@ void psx_dmac_run_transfers(struct psx_dmac* dmac) {
 	enum dmachnidx_t channel;
 	for(int priority = 7; priority >= 0; priority--) {
 		for(channel = DMACHN_MDECIN; channel < DMACHN_NUM; channel++) {
-			if(priority == DMACTL_CHNPRIORITY(dmac->regs.dmactl, channel)) {
+			if(priority == DPCR_PR_GET(dmac->regs.dpcr, channel)) {
 				do_transfer(dmac, channel);
 			}
 		}
