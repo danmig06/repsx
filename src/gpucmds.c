@@ -48,22 +48,15 @@ typedef union gp0_vec2 {
 } vec2_t;
 
 typedef struct gp0_texpage_t {
-	uint16_t x: 4;
-	uint16_t y: 1;
-	uint16_t semi_transparency: 2;
-	enum psx_gpu_texdepth depth: 2;
-	uint16_t unused: 7;
+	pos_t pos;
+	uint8_t semi_transparency;
+	uint8_t depth;
 } texpage_t;
 
-pos_t calc_page_pos(struct psx_gpu* gpu, texpage_t* page) {
+pos_t calc_page_pos(struct psx_gpu* gpu, uint16_t page) {
 	pos_t res;
-	if(page) {
-		res.x = page->x * 64;
-		res.y = page->y * 256;
-	} else {
-		res.x = GPUSTAT_TPX_GET(gpu->gpustat) * 64;
-		res.y = (gpu->gpustat & GPUSTAT_TPY) ? 256 : 0;
-	}
+	res.x = (page & 0xf) * 64;
+	res.y = ((page >> 4) & 1) * 256;
 	return res;
 }
 
@@ -132,7 +125,6 @@ void gp0_poly(struct psx_gpu* gpu) {
 
 	int min_x = v[0].x, max_x = v[0].x;
 	int min_y = v[0].y, max_y = v[0].y;
-	bool need_texpage = true;
 	int n_vertices = ((poly.is_quad) ? 4 : 3);
 	for(int i = 1; i < n_vertices; i++) {
 		if(poly.is_gouraud_shaded) {
@@ -151,13 +143,7 @@ void gp0_poly(struct psx_gpu* gpu) {
 		log_trace("vertex x=%hd, y=%hd", v[i].x, v[i].y);
 		if(poly.is_textured) {
 			tex_data[i].raw = gpu->cmd.buf[arg_idx++];
-			if(need_texpage) {
-				AS_UINT16(texpage) = tex_data[i].info;
-				need_texpage = false;
-				log_trace("texdata u=%u, v=%u, texpage:(x=%u, y=%u)", tex_data[i].u, tex_data[i].v, texpage.x * 64, texpage.y * 256);
-			} else {
-				log_trace("texdata u=%u, v=%u, info=0x%04x", tex_data[i].u, tex_data[i].v, tex_data[i].info);
-			}
+			log_trace("texdata u=%u, v=%u, info=0x%04x", tex_data[i].u, tex_data[i].v, tex_data[i].info);
 		}
 	}
 	if((max_x - min_x) > 0x3ff || (max_y - min_y) > 0x1ff) {
@@ -165,18 +151,22 @@ void gp0_poly(struct psx_gpu* gpu) {
 	}
 
 	int shading_mode = PSX_RENDERER_SH_FLAT;
-	pos_t texpage_pos = { 0 };
 	if(poly.is_textured) {
 		shading_mode = PSX_RENDERER_SH_TEXTURE;
-		GPUSTAT_TPX_SET(gpu->gpustat, texpage.x);
-		if(texpage.y) {
+		uint16_t raw_texpage = tex_data[1].info;
+		texpage.pos.x = (raw_texpage & 0xf) * 64;
+		texpage.pos.y = (raw_texpage & BIT(4)) ? 256 : 0;
+		texpage.semi_transparency = (raw_texpage >> 5) & 3;
+		texpage.depth = (raw_texpage >> 7) & 3;
+		// copy the current texpage to GPUSTAT
+		GPUSTAT_TPX_SET(gpu->gpustat, raw_texpage & 0xf);
+		if(raw_texpage & BIT(4)) {
 			gpu->gpustat |= GPUSTAT_TPY;
 		} else {
 			gpu->gpustat &= ~GPUSTAT_TPY;
 		}
 		GPUSTAT_TPDEPTH_SET(gpu->gpustat, texpage.depth);
 		GPUSTAT_ST_SET(gpu->gpustat, texpage.semi_transparency);
-		texpage_pos = calc_page_pos(gpu, &texpage);
 	} else if(poly.is_gouraud_shaded) {
 		shading_mode = PSX_RENDERER_SH_GOURAUD;
 	}
@@ -192,7 +182,7 @@ void gp0_poly(struct psx_gpu* gpu) {
 	}; 
 	gpu_render_poly(gpu, shading_mode, poly.is_quad,
 			.poly.v0 = rv[0], .poly.v1 = rv[1], .poly.v2 = rv[2], .poly.v3 = rv[3],
-			.tex.clut_x = clut.x, .tex.clut_y = clut.y, .tex.page_x = texpage_pos.x, .tex.page_y = texpage_pos.y,
+			.tex.clut_x = clut.x, .tex.clut_y = clut.y, .tex.page_x = texpage.pos.x, .tex.page_y = texpage.pos.y,
 			.tex.off_x = gpu->tex_window.off_x, .tex.off_y = gpu->tex_window.off_y, .tex.mask_x = gpu->tex_window.mask_x, .tex.mask_y = gpu->tex_window.mask_y,
 			.tex.depth = texpage.depth, .tex.need_modulation = !poly.is_raw, .tex.need_dithering = (shading_mode == PSX_RENDERER_SH_GOURAUD) || !poly.is_raw);
 }
@@ -393,7 +383,9 @@ void gp0_rect(struct psx_gpu* gpu) {
 		break;
 	}
 	log_trace("size w=%hd, h=%hd", size.x, size.y);
-	pos_t texpage_pos = calc_page_pos(gpu, NULL);
+	pos_t texpage_pos;
+	texpage_pos.x = GPUSTAT_TPX_GET(gpu->gpustat) * 64;
+	texpage_pos.y = (gpu->gpustat & GPUSTAT_TPY) ? 256 : 0;
 	
 	if(!gpu->renderer.rect) {
 		return;
