@@ -75,6 +75,9 @@ typedef struct psx_gpu_color {
 typedef void (*psx_gpucmdfn_t)(struct psx_gpu*);
 
 struct __psx_renderer_args {
+	bool set_mask_bit;
+	bool use_mask_bit;
+	bool need_dithering;
 	struct {
 		union {
 			struct {
@@ -103,7 +106,6 @@ struct __psx_renderer_args {
 		uint16_t off_x, off_y;
 		uint16_t mask_x, mask_y;
 		enum psx_gpu_texdepth depth;
-		bool need_dithering;
 		bool need_modulation;
 	} tex;
 };
@@ -112,15 +114,15 @@ struct psx_renderer {
 	void* host_data;
 
 	void (*poly)(struct psx_renderer*, int shading_mode, bool is_quad, struct __psx_renderer_args*);
-	#define gpu_render_poly(gpu, sh, quad, ...) gpu->renderer.poly(&gpu->renderer, sh, quad, &(struct __psx_renderer_args){ { 0 }, __VA_ARGS__ })
+	#define gpu_render_poly(gpu, sh, quad, ...) gpu->renderer.poly(&gpu->renderer, sh, quad, &(struct __psx_renderer_args){ 0, __VA_ARGS__ })
 	
 	void (*rect)(struct psx_renderer*, bool is_textured, struct __psx_renderer_args*);
-	#define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct __psx_renderer_args){ { 0 }, __VA_ARGS__ }) 
+	#define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct __psx_renderer_args){ 0, __VA_ARGS__ }) 
 
 	void (*line)(struct psx_renderer*, int shading_mode, struct __psx_renderer_args*);
-	#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct __psx_renderer_args){ { 0 }, __VA_ARGS__ })
+	#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct __psx_renderer_args){ 0, __VA_ARGS__ })
 
-	void (*update)(struct psx_renderer*);
+	void (*update)(struct psx_renderer*, int x, int y, int w, int h, bool is_24bit);
 	void (*clip_update)(struct psx_renderer*, unsigned x1, unsigned y1, unsigned x2, unsigned y2);
 	void (*blit)(struct psx_renderer*, int sx, int sy, int dx, int dy, int w, int h);
 	uint16_t* (*get_vram)(struct psx_renderer*, int x, int y, int w, int h);

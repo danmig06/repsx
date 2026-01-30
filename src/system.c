@@ -74,6 +74,9 @@ bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 	psx_spu_init(sys->spu);
 	sys->spu->sys = sys;
 
+	sys->mdec->sys = sys;
+	psx_mdec_init(sys->mdec);
+
 	#include "hwmap.inc"
 
 	return true;
@@ -128,14 +131,12 @@ void psx_system_update(struct psx_system* sys) {
 	}
 	*/
 
-	if(sys->current_exe) {
-		if(sys->cpu->next_pc == 0x80030000) {
-			fprintf(stderr, "exe loaded\n");
-			psx_exe_load(sys->current_exe, sys);
-		}
-	}
-
 	psx_sched_update(sys->sched, sys->cpu->clocks);
+	
+	if(sys->current_exe && sys->cpu->next_pc == 0x80030000) {
+		fprintf(stderr, "exe loaded\n");
+		psx_exe_load(sys->current_exe, sys);
+	}
 }
 
 void psx_system_start(struct psx_system* sys) {

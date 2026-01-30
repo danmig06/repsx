@@ -44,6 +44,16 @@ static void gpu_hblank(struct psx_sched* sched, struct psx_sev* self) {
 	psx_sched_remove_ev(sched, self->id);
 }
 
+static int g_dotclock_divider_table[] = { 10, 8, 5, 4, 7 };
+
+static int get_dotclock_divider(struct psx_gpu* gpu) {
+	if(gpu->gpustat & GPUSTAT_HRES2) {
+		return g_dotclock_divider_table[4];
+	} else {
+		return g_dotclock_divider_table[GPUSTAT_HRES1_GET(gpu->gpustat)];
+	}
+}
+
 static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_gpu* gpu = sched->sys->gpu;
 
@@ -72,7 +82,12 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	gpu->scanline_count = 0;
 	psx_tmr_vsync(sched->sys->timer);	
 	psx_irq_raise(sched->sys->irq, PSX_IRQ_ID_VBLANK);
-	gpu->renderer.update(&gpu->renderer);
+	
+	int dotclock_div = get_dotclock_divider(gpu);
+	int h_shift = (gpu->gpustat & GPUSTAT_VINTERLACE) && (gpu->gpustat & GPUSTAT_VRES);
+	int w = (((gpu->display_area.x2 - gpu->display_area.x1) / dotclock_div) + 2) & (~3);
+	int h = (gpu->display_area.y2 - gpu->display_area.y1) << h_shift;
+	gpu->renderer.update(&gpu->renderer, gpu->display_area.x, gpu->display_area.y, w, h, (gpu->gpustat & GPUSTAT_RGB24EN));
 	psx_sched_remove_ev(sched, self->id);
 	psx_sched_add_ev(sched, &vblank_event);
 }
@@ -234,7 +249,7 @@ static void update_gpuread(struct psx_gpu* gpu) {
 			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);
 			gpu->blit_state.texels = NULL;
 			gpu->gpuread = packet;
-			gpu->gpustat &= GPUSTAT_VRAM_READY;
+			gpu->gpustat &= ~GPUSTAT_VRAM_READY;
 			return;
 		}
 		gpu->blit_state.x = gpu->blit_state.start_x;
@@ -251,7 +266,7 @@ static void update_gpuread(struct psx_gpu* gpu) {
 			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);
 			gpu->blit_state.texels = NULL;
 			gpu->gpuread = packet;
-			gpu->gpustat &= GPUSTAT_VRAM_READY;
+			gpu->gpustat &= ~GPUSTAT_VRAM_READY;
 			return;
 		}
 		gpu->blit_state.x = gpu->blit_state.start_x;

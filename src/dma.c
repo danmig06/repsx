@@ -1,5 +1,6 @@
 #include <psx/dma.h>
 #include <psx/irq.h>
+#include <psx/mdec.h>
 
 #include <string.h>
 
@@ -148,7 +149,7 @@ uint32_t fetch_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum 
 	case DMACHN_MDECIN:
 		break;
 	case DMACHN_MDECOUT:
-		break;
+		return psx_mdec_direct_out(dmac->sys->mdec);
 	case DMACHN_GPU:
 		return psx_mem_read32(dmac->sys->memory, 0x1f801810);
 	case DMACHN_CDROM:
@@ -178,6 +179,7 @@ uint32_t fetch_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum 
 void write_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum dmachnidx_t channel, uint32_t data) {
 	switch(channel) {
 	case DMACHN_MDECIN:
+		psx_mdec_direct_in(dmac->sys->mdec, data);
 		break;
 	case DMACHN_MDECOUT:
 		break;
@@ -244,7 +246,7 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	uint32_t list_header;
 	uint32_t item;
 	uint8_t items_left;
-	uint32_t limit = 16384;
+	uint32_t limit = 65536;
 
 	while(limit--) {
 		list_header = psx_mem_read32(dmac->sys->memory, addr);
@@ -286,14 +288,14 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 
 	switch(channel) {
 	case DMACHN_MDECIN:
-		log_error("Unhandled DMACHN_MDECIN transfer (IRQ triggered)");
-		// dmac->regs.dpcr.mdecin_en = false;
+		// log_error("DMA: MDECIN transfer (%d blocks, 0x%x bytes)", chn->bc.n_blocks, chn->bc.block_size);
 		chn->ctrl &= ~CHCR_FORCE;
+		do_dev_blkcopy(dmac, channel);
 		break;
 	case DMACHN_MDECOUT:
-		log_error("Unhandled DMACHN_MDECOUT transfer (IRQ triggered)");
-		// dmac->regs.dpcr.mdecout_en = false;
+		// log_error("DMA: MDECOUT transfer (%d blocks, 0x%x bytes)", chn->bc.n_blocks, chn->bc.block_size);
 		chn->ctrl &= ~CHCR_FORCE;
+		do_dev_blkcopy(dmac, channel);
 		break;
 	case DMACHN_GPU:
 		if(CHCR_MODE_GET(chn->ctrl) != PSX_DMA_SYNC_LINKEDLIST) {
@@ -313,7 +315,7 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		break;
 	case DMACHN_SPU:
 		// many games won't start if they get no feedback
-		log_error("Unhandled DMACHN_SPU transfer (IRQ triggered)");
+		log_error("Unhandled DMACHN_SPU (write=%d) transfer (IRQ triggered)", (chn->ctrl & CHCR_DIR) != 0);
 		chn->ctrl &= ~CHCR_FORCE;
 		// CAUTION: Dead or Alive uses sound RAM to store pointers and
 		// other sensitive stuff, and will crash after some amount of time

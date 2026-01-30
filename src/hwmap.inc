@@ -53,8 +53,8 @@ sys->memory->map[10] = (struct psx_region){ "gpu",        0x1f801810, 0x00000008
 					   .read16 = psx_gpu_read16,    .write16 = psx_gpu_write16,
 					   .read8  = psx_gpu_read8,     .write8  = psx_gpu_write8    };
 
-sys->memory->map[11] = (struct psx_region){ "mdec",       0x1f801820, 0x00000008,		NULL,
-					   .read32 = psx_null_read32,   .write32 = psx_null_write32, 
+sys->memory->map[11] = (struct psx_region){ "mdec",       0x1f801820, 0x00000008,		sys->mdec,
+					   .read32 = psx_mdec_read32,   .write32 = psx_mdec_write32, 
 					   .read16 = psx_null_read16,   .write16 = psx_null_write16,
 					   .read8  = psx_null_read8,    .write8  = psx_null_write8   };
 

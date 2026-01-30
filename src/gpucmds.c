@@ -180,11 +180,13 @@ void gp0_poly(struct psx_gpu* gpu) {
 		{ .x = v[2].x, .y = v[2].y, .color = c[2].raw, .tx = tex_data[2].u, .ty = tex_data[2].v },
 		{ .x = v[3].x, .y = v[3].y, .color = c[3].raw, .tx = tex_data[3].u, .ty = tex_data[3].v }
 	}; 
+	bool use_mask = (gpu->gpustat & GPUSTAT_USEMSK) != 0;
+	bool set_mask = (gpu->gpustat & GPUSTAT_SETMSK) != 0;
 	gpu_render_poly(gpu, shading_mode, poly.is_quad,
-			.poly.v0 = rv[0], .poly.v1 = rv[1], .poly.v2 = rv[2], .poly.v3 = rv[3],
+			.poly.v0 = rv[0], .poly.v1 = rv[1], .poly.v2 = rv[2], .poly.v3 = rv[3], .use_mask_bit = use_mask, .set_mask_bit = set_mask,
 			.tex.clut_x = clut.x, .tex.clut_y = clut.y, .tex.page_x = texpage.pos.x, .tex.page_y = texpage.pos.y,
 			.tex.off_x = gpu->tex_window.off_x, .tex.off_y = gpu->tex_window.off_y, .tex.mask_x = gpu->tex_window.mask_x, .tex.mask_y = gpu->tex_window.mask_y,
-			.tex.depth = texpage.depth, .tex.need_modulation = !poly.is_raw, .tex.need_dithering = (shading_mode == PSX_RENDERER_SH_GOURAUD) || !poly.is_raw);
+			.tex.depth = texpage.depth, .tex.need_modulation = !poly.is_raw, .need_dithering = (shading_mode == PSX_RENDERER_SH_GOURAUD) || !poly.is_raw);
 }
 
 static void gp0_polyline_update(struct psx_gpu* gpu) {
@@ -268,7 +270,9 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 		}
 		gpu_render_line(gpu, (line.is_gouraud_shaded) ? PSX_RENDERER_SH_GOURAUD : PSX_RENDERER_SH_FLAT, 
 				.line.v0 = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
-				.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw });
+				.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw },
+				.use_mask_bit = (gpu->gpustat & GPUSTAT_USEMSK) != 0,
+				.set_mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) != 0);
 		break;
 	default:
 		return;
@@ -322,12 +326,35 @@ void gp0_line(struct psx_gpu* gpu) {
 		gpu->cmd.update = gp0_polyline_update;
 		gpu->cmd.buf[GPU_CMD_POLYLINE_STATE] = (line.is_gouraud_shaded) ? GPU_CMD_POLYLINE_C0 : GPU_CMD_POLYLINE_V0;
 	}
+
+	int32_t max_x, max_y, min_x, min_y;
+	if(v[0].x > v[1].x) { 
+		max_x = v[0].x;
+		min_x = v[1].x;
+	} else {
+		max_x = v[1].x;
+		min_x = v[0].x;
+	}
+	if(v[0].y > v[1].y) {
+		max_y = v[0].y;
+		min_y = v[1].y;
+	} else {
+		max_y = v[1].y;
+		min_y = v[0].y;
+	}
+
+	if((max_x - min_x) > 0x3ff || (max_y - min_y) > 0x1ff) {
+		return;
+	}
+
 	if(!gpu->renderer.line) {
 		return;
 	}
 	gpu_render_line(gpu, (line.is_gouraud_shaded) ? PSX_RENDERER_SH_GOURAUD : PSX_RENDERER_SH_FLAT, 
 			.line.v0 = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
-			.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw });
+			.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw },
+			.use_mask_bit = (gpu->gpustat & GPUSTAT_USEMSK) != 0,
+			.set_mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) != 0);
 }
 
 void gp0_rect(struct psx_gpu* gpu) {
@@ -390,9 +417,11 @@ void gp0_rect(struct psx_gpu* gpu) {
 	if(!gpu->renderer.rect) {
 		return;
 	}
+	bool use_mask = (gpu->gpustat & GPUSTAT_USEMSK) != 0;
+	bool set_mask = (gpu->gpustat & GPUSTAT_SETMSK) != 0;
 	gpu_render_rect(gpu, rect.is_textured,
-			.rect.v = { .x = tl.x, .y = tl.y, .color = rect.color0, .tx = tex_data.u, .ty = tex_data.v },
-			.rect.w = size.x, .rect.h = size.y, .tex.clut_x = clut.x, .tex.clut_y = clut.y, .tex.need_dithering = false,
+			.rect.v = { .x = tl.x, .y = tl.y, .color = rect.color0, .tx = tex_data.u, .ty = tex_data.v }, .use_mask_bit = use_mask, .set_mask_bit = set_mask,
+			.rect.w = size.x, .rect.h = size.y, .tex.clut_x = clut.x, .tex.clut_y = clut.y, .need_dithering = false,
 			.tex.page_x = texpage_pos.x, .tex.page_y = texpage_pos.y, .tex.depth = GPUSTAT_TPDEPTH_GET(gpu->gpustat), .tex.need_modulation = !rect.is_raw,
 			.tex.off_x = gpu->tex_window.off_x, .tex.off_y = gpu->tex_window.off_y, .tex.mask_x = gpu->tex_window.mask_x, .tex.mask_y = gpu->tex_window.mask_y);
 }
@@ -409,7 +438,8 @@ void gp0_fillvram(struct psx_gpu* gpu) {
 	log_trace("GP0 FillVram: x=%u, y=%u, w=%u, h=%u", tl.x, tl.y, size.x, size.y);
 	gpu_render_rect(gpu, false,
 		       .rect.v = { .x = tl.x, .y = tl.y, .color = color0 },
-		       .rect.w = size.x, .rect.h = size.y, .rect.is_clear = true);
+		       .rect.w = size.x, .rect.h = size.y, .rect.is_clear = true, .use_mask_bit = false,
+		       .set_mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) != 0);
 }
 
 static void gp0_image_load_update(struct psx_gpu* gpu) {
@@ -422,21 +452,36 @@ static void gp0_image_load_update(struct psx_gpu* gpu) {
 		uint32_t raw;
 	} data;
 	data.raw = gpu->cmd.buf[GPU_CMD_DATA_IDX];
+	uint16_t mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) ? 0x8000 : 0;
+	bool check_mask = (gpu->gpustat & GPUSTAT_USEMSK) != 0;
 
 	uint32_t max_x = gpu->blit_state.start_x + gpu->blit_state.w;
 	uint32_t x = gpu->blit_state.x - gpu->blit_state.start_x;
 	uint32_t y = gpu->blit_state.y - gpu->blit_state.start_y;
-	// gpu->renderer.vram_write(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, data.colors[0]);
-	gpu->blit_state.texels[x + (y * gpu->blit_state.w)] = data.colors[0];
+	if(check_mask) {
+		uint16_t texel = gpu->blit_state.texels[x + (y * gpu->blit_state.w)];
+		if(!(texel & 0x8000)) {
+			gpu->blit_state.texels[x + (y * gpu->blit_state.w)] = data.colors[0] | mask_bit;
+		}
+	} else {
+		gpu->blit_state.texels[x + (y * gpu->blit_state.w)] = data.colors[0] | mask_bit;
+	}
 	gpu->blit_state.x++;
 	if(gpu->blit_state.x == max_x) {
 		gpu->blit_state.x = gpu->blit_state.start_x;
 		gpu->blit_state.y++;
 	}
-	// gpu->renderer.vram_write(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, data.colors[1]);
+	// TODO: what if 1 (just 16 bit) texel gets requested?
 	x = gpu->blit_state.x - gpu->blit_state.start_x;
 	y = gpu->blit_state.y - gpu->blit_state.start_y;
-	gpu->blit_state.texels[x + (y * gpu->blit_state.w)] = data.colors[1];
+	if(check_mask) {
+		uint16_t texel = gpu->blit_state.texels[x + (y * gpu->blit_state.w)];
+		if(!(texel & 0x8000)) {
+			gpu->blit_state.texels[x + (y * gpu->blit_state.w)] = data.colors[1] | mask_bit;
+		}
+	} else {
+		gpu->blit_state.texels[x + (y * gpu->blit_state.w)] = data.colors[1] | mask_bit;
+	}
 	gpu->blit_state.x++;
 	if(gpu->blit_state.x == max_x) {
 		gpu->blit_state.x = gpu->blit_state.start_x;
@@ -618,13 +663,13 @@ void gp1_dma_direction(struct psx_gpu* gpu, uint32_t cmd) {
 }
 
 void gp1_set_display_area(struct psx_gpu* gpu, uint32_t cmd) {
-	gpu->display_area.x = cmd & 0x3ff; // 10 bits
+	gpu->display_area.x = cmd & 0x3fe; // 10 bits
 	gpu->display_area.y = (cmd >> 10) & 0x1ff; // 9 bits
 }
 
 void gp1_set_display_hrange(struct psx_gpu* gpu, uint32_t cmd) {
-	gpu->display_area.x1 = cmd & 0xfff; // 12 bits
-	gpu->display_area.x2 = (cmd >> 12) & 0xfff; // 12 bits
+	gpu->display_area.x1 = cmd & 0xfff; // 10 bits
+	gpu->display_area.x2 = (cmd >> 12) & 0xfff; // 10 bits
 }
 
 void gp1_set_display_vrange(struct psx_gpu* gpu, uint32_t cmd) {

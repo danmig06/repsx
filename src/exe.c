@@ -7,6 +7,8 @@
 bool psx_exe_open(struct psx_exe* exe, const char* filename) {
 	exe->file = fopen(filename, "rb");
 	if(!exe->file) {
+		log_error("failed to open exe file at \"%s\"", filename);
+		exe->is_loaded = false;
 		return false;
 	}
 

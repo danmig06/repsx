@@ -11,6 +11,7 @@
 #include <psx/sio.h>
 #include <psx/timer.h>
 #include <psx/spu.h>
+#include <psx/mdec.h>
 #include <psx/sched.h>
 #include <psx/exe.h>
 

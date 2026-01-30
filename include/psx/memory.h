@@ -36,8 +36,8 @@ struct psx_region {
 
 struct psx_mem {
 	uint8_t* phys;
-	uint8_t* scratch;
 	struct psx_region map[PSX_MEM_NUM_REGIONS];
+	uint8_t scratch[PSX_MEM_SCRATCH_SIZE];
 	struct psx_system* sys;
 };
 

@@ -54,6 +54,7 @@ struct psx_system {
 	struct psx_sio* sio;
 	struct psx_timer* timer;
 	struct psx_spu* spu;
+	struct psx_mdec* mdec;
 	struct psx_sched* sched;
 	struct psx_exe* current_exe;
 };

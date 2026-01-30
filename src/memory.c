@@ -19,10 +19,6 @@ void psx_mem_init(struct psx_mem* memory) {
 	}
 	memset(memory->phys, 0, PSX_MEM_PHYS_SIZE);
 
-	memory->scratch = malloc(PSX_MEM_SCRATCH_SIZE);
-	if(!memory->scratch) {
-		perror("Failed to allocate scratchpad memory: ");
-	}
 	memset(memory->scratch, 0, PSX_MEM_SCRATCH_SIZE);
 }
 
@@ -49,9 +45,7 @@ static struct psx_region* get_mapped_region(struct psx_mem* memory, uint32_t add
 
 uint32_t psx_mem_read32(struct psx_mem* memory, uint32_t addr) {
 	if(PSX_MEM_REAL_ADDR(addr) < (PSX_MEM_PHYS_SIZE * 4)) {
-		uint32_t val;
-		memcpy(&val, &memory->phys[addr & 0x1fffff], sizeof(val));
-		return val;
+		return *(uint32_t*)(&memory->phys[addr & 0x1fffff]);
 	}
 	struct psx_region* selected_region = get_mapped_region(memory, addr);
 	return selected_region->read32(selected_region, addr);
@@ -59,7 +53,7 @@ uint32_t psx_mem_read32(struct psx_mem* memory, uint32_t addr) {
 
 void psx_mem_write32(struct psx_mem* memory, uint32_t addr, uint32_t val) {
 	if(PSX_MEM_REAL_ADDR(addr) < (PSX_MEM_PHYS_SIZE * 4)) {
-		memcpy(&memory->phys[addr & 0x1fffff], &val, sizeof(val));
+		*(uint32_t*)(&memory->phys[addr & 0x1fffff]) = val;
 		return;
 	}
 	struct psx_region* selected_region = get_mapped_region(memory, addr);
@@ -68,9 +62,7 @@ void psx_mem_write32(struct psx_mem* memory, uint32_t addr, uint32_t val) {
 
 uint16_t psx_mem_read16(struct psx_mem* memory, uint32_t addr) {
 	if(PSX_MEM_REAL_ADDR(addr) < (PSX_MEM_PHYS_SIZE * 4)) {
-		uint16_t val;
-		memcpy(&val, &memory->phys[addr & 0x1fffff], sizeof(val));
-		return val;
+		return *(uint16_t*)(&memory->phys[addr & 0x1fffff]);
 	}
 	struct psx_region* selected_region = get_mapped_region(memory, addr);
 	return selected_region->read16(selected_region, addr);
@@ -78,7 +70,7 @@ uint16_t psx_mem_read16(struct psx_mem* memory, uint32_t addr) {
 
 void psx_mem_write16(struct psx_mem* memory, uint32_t addr, uint16_t val) {
 	if(PSX_MEM_REAL_ADDR(addr) < (PSX_MEM_PHYS_SIZE * 4)) {
-		memcpy(&memory->phys[addr & 0x1fffff], &val, sizeof(val));
+		*(uint16_t*)(&memory->phys[addr & 0x1fffff]) = val;
 		return;
 	}
 	struct psx_region* selected_region = get_mapped_region(memory, addr);
@@ -95,7 +87,7 @@ uint8_t psx_mem_read8(struct psx_mem* memory, uint32_t addr) {
 
 void psx_mem_write8(struct psx_mem* memory, uint32_t addr, uint8_t val) {
 	if(PSX_MEM_REAL_ADDR(addr) < (PSX_MEM_PHYS_SIZE * 4)) {
-		memcpy(&memory->phys[addr & 0x1fffff], &val, sizeof(val));
+		memory->phys[addr & 0x1fffff] = val;
 		return;
 	}
 	struct psx_region* selected_region = get_mapped_region(memory, addr);
