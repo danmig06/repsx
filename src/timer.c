@@ -215,7 +215,9 @@ static inline void update_mode(struct psx_timer* tmr, uint32_t idx) {
 		break;
 	case 1:
 		if(clk_source & 1) {
-			tmr->tstatus[idx].rate = 1629; // PSX_GPU_CLOCKS_PER_HBLANK;
+			// causes slightly faster speeds for games like Silent Hill, 
+			// values like 2048 bring it closer to normal speeds
+			tmr->tstatus[idx].rate = 2048; // 1629; // PSX_GPU_CLOCKS_PER_HBLANK;
 		} else {
 			tmr->tstatus[idx].rate = 1;
 		}
@@ -235,7 +237,6 @@ static inline void update_mode(struct psx_timer* tmr, uint32_t idx) {
 				tmr->t[idx].mode &= ~MODE_SYNC_EN;
 			}
 		}
-	
 		break;
 	}
 
@@ -243,7 +244,7 @@ static inline void update_mode(struct psx_timer* tmr, uint32_t idx) {
 }
 
 static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
-	int idx = off >> 4;
+	int idx = (off >> 4) & 3;
 	uint32_t val = 0;
 
 	switch(off & 0xf) {
@@ -274,7 +275,7 @@ static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
 }
 
 static void tmr_write(struct psx_timer* tmr, uint32_t off, uint32_t val) {
-	int idx = off >> 4;
+	int idx = (off >> 4) & 3;
 
 	tmr_update(tmr);
 	switch(off & 0xf) {
@@ -300,7 +301,7 @@ static void tmr_write(struct psx_timer* tmr, uint32_t off, uint32_t val) {
 }
 
 uint32_t psx_tmr_read32(struct psx_region* reg, uint32_t addr) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	uint32_t val = tmr_read(reg->peripheral, register_offset);
 	/*
@@ -325,13 +326,13 @@ uint32_t psx_tmr_read32(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_tmr_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	tmr_write(reg->peripheral, register_offset, val);
 }
 
 uint16_t psx_tmr_read16(struct psx_region* reg, uint32_t addr) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	uint16_t val = tmr_read(reg->peripheral, register_offset);
 	/*
@@ -356,7 +357,7 @@ uint16_t psx_tmr_read16(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_tmr_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	tmr_write(reg->peripheral, register_offset, val);
 }

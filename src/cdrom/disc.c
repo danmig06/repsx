@@ -13,7 +13,8 @@ void psx_disc_verify(struct psx_disc* disc) {
 		return;
 	}
 
-	if(memcmp(&sector_buf[PS_STR_OFFSET], "PLAYSTATION", PS_STR_SIZE)) {
+	// PlayStation discs have a PLAYSTATION string in the system area
+	if(memcmp(&sector_buf[PS_STR_OFFSET], "PLAYSTATION", PS_STR_SIZE) != 0) {
 		disc->type = PSX_DT_AUDIO;
 		return;
 	}

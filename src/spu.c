@@ -1,19 +1,21 @@
 #include <psx/spu.h>
+#include <psx/memory.h>
 
-#include <string.h>
 #include "util.h"
 #include "log.h"
+
+#include <string.h>
 
 void psx_spu_init(struct psx_spu* spu) {
 	psx_spu_reset(spu);
 }
 
 void psx_spu_reset(struct psx_spu* spu) {
-	memset(spu, 0, sizeof(*spu));
+	memset(&spu->regs, 0, sizeof(spu->regs));
 }
 
 uint32_t psx_spu_read32(struct psx_region* reg, uint32_t addr) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_spu* spu = reg->peripheral;
 	uint8_t* regs = reg->peripheral;
 
@@ -29,7 +31,7 @@ uint32_t psx_spu_read32(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_spu_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_spu* spu = reg->peripheral;
 	uint8_t* regs = reg->peripheral;
 
@@ -45,7 +47,7 @@ void psx_spu_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 }
 
 uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_spu* spu = reg->peripheral;
 	uint8_t* regs = reg->peripheral;
 
@@ -61,7 +63,7 @@ uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_spu_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_spu* spu = reg->peripheral;
 	uint8_t* regs = reg->peripheral;
 
@@ -77,7 +79,7 @@ void psx_spu_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 }
 
 uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_spu* spu = reg->peripheral;
 	uint8_t* regs = reg->peripheral;
 
@@ -93,7 +95,7 @@ uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_spu_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_spu* spu = reg->peripheral;
 	uint8_t* regs = reg->peripheral;
 

@@ -461,10 +461,9 @@ static void read_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 }
 
 void CdlRead(struct psx_cdrom* cdr) {
-	uint32_t loc = cdr->loc - (150 + (cdr->state & STAT_READING) ? 1 : 0);
-	uint8_t cm = BYTE_TO_BCD((loc / 4500) % 60);
-	uint8_t cs = BYTE_TO_BCD((loc / 75) % 60);
-	uint8_t cf = BYTE_TO_BCD(loc % 75);
+	uint8_t cm = BYTE_TO_BCD((cdr->loc / 4500) % 60);
+	uint8_t cs = BYTE_TO_BCD((cdr->loc / 75) % 60);
+	uint8_t cf = BYTE_TO_BCD(cdr->loc % 75);
 	log_debug("CDROM: CdlRead(%02x:%02x:%02x)", cm, cs, cf);
 	// no disc error?
 	cdr_schedule_ack_ev(cdr, 3, .trigger = read_ack_evcb);
@@ -513,7 +512,7 @@ static void stop_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 }
 
 void CdlStop(struct psx_cdrom* cdr) {
-	log_error("CDROM: CdlStop()");
+	log_debug("CDROM: CdlStop()");
 	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3, .trigger = stop_ack_evcb);
 }

@@ -272,7 +272,6 @@ bool bu_send(struct psx_bu* bu, uint8_t byte) {
 		log_error("BU: unknown command byte 0x%02x", byte);
 		bu->session_active = false;
 		break;
-		// return false;
 	}
 
 	// pull ACK high
@@ -288,10 +287,8 @@ uint8_t bu_recv(struct psx_bu* bu) {
 bool bu_tx_finished(struct psx_bu* bu) {
 	switch(bu->current_command) {
 	case CMD_READ_DATA:
-		// log_error("read command %s (state=%d)", (bu->command_state == (BU_STATE_R_END + 1)) ? "finished" : "ongoing", bu->command_state);
 		return bu->command_state == (BU_STATE_R_END + 1);
 	case CMD_WRITE_DATA:
-		// log_error("write command %s (state=%d)", (bu->command_state == (BU_STATE_W_END + 1)) ? "finished" : "ongoing", bu->command_state);
 		return bu->command_state == (BU_STATE_W_END + 1);
 	case CMD_GET_ID:
 		return bu->command_state == (BU_STATE_S_ID_END + 1);	

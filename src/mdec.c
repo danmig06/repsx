@@ -60,6 +60,7 @@ void psx_mdec_init(struct psx_mdec* mdec) {
 
 void psx_mdec_reset(struct psx_mdec* mdec) {
 	// STAT_DATA_OUT_EMPTY | BLOCK_TYPE_Y
+	log_error("MDEC: reset");
 	mdec->regs.stat = 0x80040000;
 	// abort current command
 	mdec->regs.command = 0;
@@ -255,15 +256,22 @@ void psx_mdec_direct_in(struct psx_mdec* mdec, uint32_t word) {
 			mdec->block.index = 0;
 			mdec->block.n_available = 0;
 			mdec->block.offset = 0;
+			mdec->block.is_monochrome = STAT_OUTDEPTH_GET(mdec->regs.stat) < 2;
 			if(mdec->block.is_monochrome) {
 				mdec->block.size = 8 * 8 * 2;
+				STAT_CURBLK_SET(mdec->regs.stat, BLOCK_TYPE_Y);
 			} else {
 				mdec->block.size = 16 * 16 * ((STAT_OUTDEPTH_GET(mdec->regs.stat) == 2) ? 3 : 2);
+				STAT_CURBLK_SET(mdec->regs.stat, BLOCK_TYPE_Y1);
 			}
-			mdec->block.is_monochrome = STAT_OUTDEPTH_GET(mdec->regs.stat) < 2;
 			mdec->dec.offset = 0;
 			mdec_decode_block(mdec);
 			mdec->regs.stat &= ~STAT_OUT_EMPTY;
+		}
+		mdec->regs.stat |= STAT_IN_FULL;
+		mdec->regs.stat &= ~(STAT_BUSY | STAT_DATA_IN_REQ);
+		if(mdec->regs.ctrl & CTRL_DATA_OUT_EN) {
+			mdec->regs.stat |= STAT_DATA_OUT_REQ;
 		}
 	}
 }
@@ -289,6 +297,8 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 		STAT_NWORDS_SET(mdec->regs.stat, mdec->input.size - 1);
 		mdec->receiving_data = true;
 		mdec->input.is_data = true;
+		mdec->regs.stat &= ~STAT_IN_FULL;
+		mdec->regs.stat |= STAT_OUT_EMPTY;
 
 		/*
 		char* mb = (cmd & BIT(25)) ? "Mask ON," : "Mask OFF,";
@@ -298,7 +308,8 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 		break;
 	case 2:
 		log_error("MDEC: Set iqtab (luminance AND color=%d)", cmd & BIT(0));
-		mdec->input.dst = (uint32_t*)&mdec->iqtab;
+		mdec->regs.stat &= ~(STAT_IN_FULL | STAT_OUT_EMPTY);
+		mdec->input.dst = (uint32_t*)mdec->iqtab;
 		uint32_t size;
 		if(cmd & BIT(0)) {
 			size = WORD_SIZE(mdec->iqtab, 128);
@@ -311,7 +322,8 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 		break;
 	case 3:
 		log_error("MDEC: Set Scale Table");
-		mdec->input.dst = (uint32_t*)&mdec->scale_table;
+		mdec->regs.stat &= ~(STAT_IN_FULL | STAT_OUT_EMPTY);
+		mdec->input.dst = (uint32_t*)mdec->scale_table;
 		mdec->input.size = WORD_SIZE(mdec->scale_table, 64);
 		mdec->receiving_data = true;
 		mdec->input.is_data = false;
@@ -323,6 +335,10 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 	// all valid commands copy bits 25-28 to stat bits 23-26
 	mdec->regs.stat &= ~(STAT_OUTMASK | STAT_OUTSIGN | STAT_OUTDEPTH);
 	mdec->regs.stat |= (cmd >> 2) & (STAT_OUTMASK | STAT_OUTSIGN | STAT_OUTDEPTH);
+	mdec->regs.stat |= STAT_BUSY;
+	if(mdec->regs.ctrl & CTRL_DATA_IN_EN) {
+		mdec->regs.stat |= STAT_DATA_IN_REQ;
+	}
 	mdec->regs.command = cmd_num;
 	mdec->input.offset = 0;
 }
@@ -332,7 +348,7 @@ uint32_t psx_mdec_read32(struct psx_region* reg, uint32_t addr) {
 	struct psx_mdec* mdec = reg->peripheral;
 	if(register_offset == 0) {
 		// return pending data
-		return 0;
+		return mdec_read_block(mdec);
 	} else if(register_offset == 4) {
 		return mdec->regs.stat;
 	}

@@ -61,7 +61,7 @@ static void write_dicr(struct psx_dmac* dmac, uint32_t val) {
 }
 
 void psx_dmac_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	
 	if(register_offset == 0x74) {
 		write_dicr(reg->peripheral, val);
@@ -77,7 +77,7 @@ void psx_dmac_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 
 uint16_t psx_dmac_read16(struct psx_region* reg, uint32_t addr) {
 	uint16_t val = 0;
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	uint8_t* regs = reg->peripheral;
 	memcpy(&val, &regs[register_offset], sizeof(val));
@@ -86,7 +86,7 @@ uint16_t psx_dmac_read16(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_dmac_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	if(register_offset >= 0x74 && 0x78 > register_offset) {
 		int shift = register_offset - 0x74;
@@ -102,13 +102,13 @@ void psx_dmac_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 }
 
 uint8_t psx_dmac_read8(struct psx_region* reg, uint32_t addr) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	uint8_t* regs = reg->peripheral;
 	return regs[register_offset];
 }
 
 void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	if(register_offset >= 0x74 && 0x78 > register_offset) {
 		int shift = register_offset - 0x74;
 		write_dicr(reg->peripheral, ((uint32_t)val) << (shift * 8));
@@ -124,12 +124,12 @@ void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 
 uint32_t transfer_size(psx_dma_channel_t chn) {
 	switch(CHCR_MODE_GET(chn.ctrl)) {
-	case PSX_DMA_SYNC_MANUAL:
+	case PSX_DMA_MODE_MANUAL:
 		if(chn.bc.n_words == 0) {
 			return 0x10000;
 		}
 		return chn.bc.n_words;
-	case PSX_DMA_SYNC_REQUEST:
+	case PSX_DMA_MODE_REQUEST:
 		return chn.bc.block_size * chn.bc.n_blocks;
 	default:
 		return 0;
@@ -137,7 +137,7 @@ uint32_t transfer_size(psx_dma_channel_t chn) {
 }
 
 bool is_triggered(psx_dma_channel_t* chn) {
-	if(CHCR_MODE_GET(chn->ctrl) == PSX_DMA_SYNC_MANUAL) {
+	if(CHCR_MODE_GET(chn->ctrl) == PSX_DMA_MODE_MANUAL) {
 		return (chn->ctrl & CHCR_START) && (chn->ctrl & CHCR_FORCE);
 	}
 	return (chn->ctrl & CHCR_START) != 0;
@@ -217,7 +217,6 @@ void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 			psx_mem_write32(dmac->sys->memory, copy_state.addr, src);
 
 			copy_state.addr = (copy_state.addr + copy_state.increment) & 0x1fffff;
-			chn->start_addr = copy_state.addr;
 			copy_state.words_left--;
 		}
 	} else {
@@ -226,9 +225,12 @@ void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 			write_word_dev(dmac, &copy_state, channel, src);
 
 			copy_state.addr = (copy_state.addr + copy_state.increment) & 0x1fffff;
-			chn->start_addr = copy_state.addr;
 			copy_state.words_left--;
 		}
+	}
+
+	if(CHCR_MODE_GET(chn->ctrl) != PSX_DMA_MODE_MANUAL) {
+		chn->start_addr = copy_state.addr;
 	}
 }
 
@@ -237,12 +239,12 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		panic("linked list mode is not implemented for devices other than GPU");
 	}
 
-	psx_dma_channel_t chn = dmac->regs.chn[channel];
-	if((chn.ctrl & CHCR_DIR) != PSX_DMA_DIR_FROM_RAM) {
+	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
+	if((chn->ctrl & CHCR_DIR) != PSX_DMA_DIR_FROM_RAM) {
 		panic("invalid linked list transfer");
 	}
 
-	uint32_t addr = chn.start_addr & 0x1ffffc;
+	uint32_t addr = chn->start_addr & 0xfffffc;
 	uint32_t list_header;
 	uint32_t item;
 	uint8_t items_left;
@@ -250,20 +252,22 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 
 	while(limit--) {
 		list_header = psx_mem_read32(dmac->sys->memory, addr);
+
 		items_left = list_header >> 24;
 
 		while(items_left > 0) {
-			addr = (addr + 4) & 0x1ffffc;
+			addr = (addr + 4) & 0xfffffc;
 			item = psx_mem_read32(dmac->sys->memory, addr);
 			psx_mem_write32(dmac->sys->memory, 0x1f801810, item);
 			items_left--;
 		}
-		
+
 		if(list_header & 0x800000) {
+			chn->start_addr = list_header & 0xffffff;
 			break;
 		}
 
-		addr = list_header & 0x1ffffc;
+		addr = list_header & 0xfffffc;
 	}
 }
 
@@ -271,11 +275,10 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
 	if(channel == DMACHN_OTC) {
 		// OTC is hardwired differently, it needs special handling
-		// chn[7].bit1 is hardwired to 1
+		// the increment bit is hardwired to 1 (negative increment)
 		chn->ctrl |= CHCR_INC;
-		// transfer mode is not factored in so we treat it as manual,
-		// since it actually is a garbage value it will be cleared later
-		CHCR_MODE_SET(chn->ctrl, PSX_DMA_SYNC_MANUAL);
+		// transfer mode is not factored in so we treat it as manual
+		CHCR_MODE_SET(chn->ctrl, PSX_DMA_MODE_MANUAL);
 		chn->ctrl &= ~CHCR_DIR;
 		if(!(DPCR_EN_GET(dmac->regs.dpcr, DMACHN_OTC) && is_triggered(chn))) {
 			chn->ctrl &= OTC_CHCR_MASK;
@@ -298,7 +301,7 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		do_dev_blkcopy(dmac, channel);
 		break;
 	case DMACHN_GPU:
-		if(CHCR_MODE_GET(chn->ctrl) != PSX_DMA_SYNC_LINKEDLIST) {
+		if(CHCR_MODE_GET(chn->ctrl) != PSX_DMA_MODE_LINKEDLIST) {
 			chn->ctrl &= ~CHCR_FORCE;
 			do_dev_blkcopy(dmac, channel);
 		} else {

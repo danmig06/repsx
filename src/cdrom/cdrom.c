@@ -19,7 +19,7 @@ void psx_cdr_reset(struct psx_cdrom* cdr) {
 	cdr->param_queue = queue_create(PSX_CDROM_PARMBUF_SIZE);
 	cdr->state = 0;
 	cdr->regs.ctrl = CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
-	cdr->loc = 0;
+	cdr->loc = 150;
 	cdr->report_absolute = false;
 }
 
@@ -103,7 +103,7 @@ uint16_t psx_cdr_read16(struct psx_region* reg, uint32_t addr) {
 
 uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 	struct psx_cdrom* cdr = reg->peripheral;
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	switch(register_offset) {
 	case 0:
 		// log_trace("CDROM: control register read (%02x)", AS_UINT8(cdr->regs.ctrl));
@@ -132,7 +132,7 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 
 void psx_cdr_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	struct psx_cdrom* cdr = reg->peripheral;
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	if(register_offset == 0) {
 		CTRL_BANK_SET(cdr->regs.ctrl, val);
 		return;

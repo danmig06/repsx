@@ -4,10 +4,10 @@
 #include <psx/memory.h>
 
 enum {
-	PSX_DMA_SYNC_MANUAL     = 0,
-	PSX_DMA_SYNC_REQUEST    = 1,
-	PSX_DMA_SYNC_LINKEDLIST = 2,
-	PSX_DMA_SYNC_RESERVED   = 3,
+	PSX_DMA_MODE_MANUAL     = 0,
+	PSX_DMA_MODE_REQUEST    = 1,
+	PSX_DMA_MODE_LINKEDLIST = 2,
+	PSX_DMA_MODE_RESERVED   = 3,
 };
 
 enum {

@@ -91,8 +91,6 @@ void enter_exception(struct psx_cpu* cpu, uint32_t cause) {
 		// set the BT flag
 		if(cpu->branch_taken) {
 			cpu->cop0_regs.cause |= CAUSE_BT;
-		} else {
-			cpu->cop0_regs.cause &= ~CAUSE_BT;
 		}
 	}
 

@@ -27,28 +27,11 @@
 #define PSX_GPU_VISIBLE_SCANS_PAL 288
 #define PSX_GPU_TOTAL_SCANS_PAL 314
 
-enum psx_gpu_texdepth {
+enum {
 	PSX_GPU_TEXDEPTH_4BIT = 0,
 	PSX_GPU_TEXDEPTH_8BIT = 1,
 	PSX_GPU_TEXDEPTH_15BIT = 2,
 	PSX_GPU_TEXDEPTH_RESERVED = 3
-};
-
-enum psx_gpu_dpydepth {
-	PSX_GPU_DISPLAYDEPTH_15BIT = 0,
-	PSX_GPU_DISPLAYDEPTH_24BIT = 1
-};
-
-enum psx_gpu_vmode {
-	PSX_GPU_VMODE_NTSC = 0,
-	PSX_GPU_VMODE_PAL = 1
-};
-
-enum psx_gpu_dmadir {
-	PSX_GPU_DMADIR_OFF = 0,
-	PSX_GPU_DMADIR_FIFO = 1,
-	PSX_GPU_DMADIR_CPUTOGP0 = 2,
-	PSX_GPU_DMADIR_VRAMTOCPU = 3
 };
 
 enum {
@@ -65,62 +48,67 @@ typedef struct psx_gpu_vert {
 	uint8_t ty;
 } psx_gpu_vert_t;
 
-typedef struct psx_gpu_color {
-	uint16_t r: 5;
-	uint16_t g: 5;
-	uint16_t b: 5;
-	uint16_t x: 1;
-} psx_gpu_color_t;
+typedef struct psx_gpu_vec2 {
+	uint16_t x;
+	uint16_t y;
+} psx_gpu_vec2_t;
 
 typedef void (*psx_gpucmdfn_t)(struct psx_gpu*);
 
-struct __psx_renderer_args {
+typedef struct psx_poly_args {
+	bool is_quad;
+	union {
+		struct {
+			psx_gpu_vert_t v0, v1, v2, v3;
+		};
+		psx_gpu_vert_t vertices[4];
+	};
+} psx_poly_args_t;
+
+typedef struct psx_rect_args {
+	bool is_clear;
+	uint16_t w, h;
+	psx_gpu_vert_t v;
+} psx_rect_args_t;
+
+typedef union psx_line_args {
+	struct {
+		psx_gpu_vert_t v0, v1;
+	};
+	psx_gpu_vert_t vertices[2];
+} psx_line_args_t;
+
+typedef struct psx_render_args {
 	bool set_mask_bit;
 	bool use_mask_bit;
 	bool need_dithering;
+	int transparency_mode;
 	struct {
-		union {
-			struct {
-				psx_gpu_vert_t v0, v1;
-			};
-			psx_gpu_vert_t vertices[2];
-		};
-	} line;
-	struct {
-		psx_gpu_vert_t v;
-		uint32_t w, h;
-		bool flip_x, flip_y, is_clear;
-	} rect;
-	struct {
-		bool quad;
-		union {
-			struct {
-				psx_gpu_vert_t v0, v1, v2, v3;
-			};
-			psx_gpu_vert_t vertices[4];
-		};
-	} poly;
-	struct {
-		uint16_t page_x, page_y;
-		uint16_t clut_x, clut_y;
-		uint16_t off_x, off_y;
-		uint16_t mask_x, mask_y;
-		enum psx_gpu_texdepth depth;
+		psx_gpu_vec2_t page;
+		psx_gpu_vec2_t clut;
+		psx_gpu_vec2_t offset;
+		psx_gpu_vec2_t mask;
+		int depth_mode;
 		bool need_modulation;
 	} tex;
-};
+	union {
+		psx_poly_args_t poly;
+		psx_rect_args_t rect;
+		psx_line_args_t line;
+	};
+} psx_render_args_t;
 
 struct psx_renderer {
 	void* host_data;
 
-	void (*poly)(struct psx_renderer*, int shading_mode, bool is_quad, struct __psx_renderer_args*);
-	#define gpu_render_poly(gpu, sh, quad, ...) gpu->renderer.poly(&gpu->renderer, sh, quad, &(struct __psx_renderer_args){ 0, __VA_ARGS__ })
+	void (*poly)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
+	#define gpu_render_poly(gpu, sh, ...) gpu->renderer.poly(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
 	
-	void (*rect)(struct psx_renderer*, bool is_textured, struct __psx_renderer_args*);
-	#define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct __psx_renderer_args){ 0, __VA_ARGS__ }) 
+	void (*rect)(struct psx_renderer*, bool is_textured, struct psx_render_args*);
+	#define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct psx_render_args){ __VA_ARGS__ }) 
 
-	void (*line)(struct psx_renderer*, int shading_mode, struct __psx_renderer_args*);
-	#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct __psx_renderer_args){ 0, __VA_ARGS__ })
+	void (*line)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
+	#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
 
 	void (*update)(struct psx_renderer*, int x, int y, int w, int h, bool is_24bit);
 	void (*clip_update)(struct psx_renderer*, unsigned x1, unsigned y1, unsigned x2, unsigned y2);

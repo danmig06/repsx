@@ -15,6 +15,7 @@
 #define CPU_CLOCKS_PER_VSYNC 564480
 #define CPU_CLOCKS_PER_HDRAW 1629 // (CPVSYNC / 260) - CPSCAN
 #define HBLANK_DURATION 542 // (CPVSYNC / 260) - CPHDRAW
+#define OVERSCAN_SIZE 8
 
 static void gpu_hblank(struct psx_sched*, struct psx_sev*);
 static void gpu_hblank_end(struct psx_sched*, struct psx_sev*);
@@ -86,8 +87,8 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	int dotclock_div = get_dotclock_divider(gpu);
 	int h_shift = (gpu->gpustat & GPUSTAT_VINTERLACE) && (gpu->gpustat & GPUSTAT_VRES);
 	int w = (((gpu->display_area.x2 - gpu->display_area.x1) / dotclock_div) + 2) & (~3);
-	int h = (gpu->display_area.y2 - gpu->display_area.y1) << h_shift;
-	gpu->renderer.update(&gpu->renderer, gpu->display_area.x, gpu->display_area.y, w, h, (gpu->gpustat & GPUSTAT_RGB24EN));
+	int h = (((gpu->display_area.y2 - OVERSCAN_SIZE) - gpu->display_area.y1)) << h_shift;
+	gpu->renderer.update(&gpu->renderer, gpu->display_area.x, gpu->display_area.y + OVERSCAN_SIZE, w, h, (gpu->gpustat & GPUSTAT_RGB24EN));
 	psx_sched_remove_ev(sched, self->id);
 	psx_sched_add_ev(sched, &vblank_event);
 }
