@@ -7,8 +7,6 @@
 
 #include <stdbool.h>
 
-struct psx_spu g_dummy_spu;
-
 void psx_set_log_level(int level) {
 	log_set_quiet(false);
 	switch(level) {
@@ -70,9 +68,8 @@ bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 	psx_sio_init(sys->sio);
 	sys->sio->sys = sys;
 
-	sys->spu = &g_dummy_spu;
-	psx_spu_init(sys->spu);
 	sys->spu->sys = sys;
+	psx_spu_init(sys->spu);
 
 	sys->mdec->sys = sys;
 	psx_mdec_init(sys->mdec);

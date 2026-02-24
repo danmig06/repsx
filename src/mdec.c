@@ -1,13 +1,13 @@
 #include <psx/mdec.h>
 
 #include "rdef/mdec.h"
+#include "util.h"
 #include "log.h"
 
 #include <string.h>
 
 #define WORD_SIZE(o, s) ((sizeof(*o) * s) / 4)
 #define SE10(n) (((int16_t)((n) << 6)) >> 6)
-#define SAT(v, a, b) (((v) < (a)) ? (a) : (((v) > (b)) ? (b) : (v)))
 #define RL_SIZE 64 * 2
 // the theoretical maximum is 128kb according to some PsyQ docs, but some games like the RE games
 // attempt to decompress a larger input, and may max out the hardware's 0xffff word limit
@@ -60,7 +60,7 @@ void psx_mdec_init(struct psx_mdec* mdec) {
 
 void psx_mdec_reset(struct psx_mdec* mdec) {
 	// STAT_DATA_OUT_EMPTY | BLOCK_TYPE_Y
-	log_error("MDEC: reset");
+	// log_error("MDEC: reset");
 	mdec->regs.stat = 0x80040000;
 	// abort current command
 	mdec->regs.command = 0;

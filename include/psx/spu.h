@@ -6,54 +6,52 @@
 
 #include <stdbool.h>
 
+#define PSX_SPU_MEM_SIZE (512 * 1024)
+#define PSX_SPU_OUTBUF_SIZE 32768
+
 struct psx_spu {
-	struct {
+	struct __attribute__((packed)) {
 		struct {
-			uint16_t lvolume;
-			uint16_t rvolume;
+			 int16_t lvolume;
+			 int16_t rvolume;
 			uint16_t sample_rate;
 			uint16_t start_address;
-			struct {
-				uint8_t r;
-				uint8_t s;
-				uint8_t d;
-				uint8_t a;
-			} adsr;
-			uint16_t adsr_volume;
+			uint32_t adsr;
+			 int16_t adsr_volume;
 			uint16_t adsr_repeat;
 		} voice[24];
-		uint16_t main_lvolume;
-		uint16_t main_rvolume;
-		uint16_t reverb_lvolume;
-		uint16_t reverb_rvolume;
+		 int16_t main_lvolume;
+		 int16_t main_rvolume;
+		 int16_t revb_lvolume;
+		 int16_t revb_rvolume;
 		uint32_t kon;
 		uint32_t koff;
 		uint32_t pitch_en;
 		uint32_t noise_en;
 		uint32_t echo_on;
-		uint32_t voice_en;
+		uint32_t endx;
 		uint16_t unk_da0;
-		uint16_t mbase;
-		uint16_t irq9addr;
-		uint16_t ramdta;
-		uint16_t ramdtf;
+		uint16_t revb_base;
+		uint16_t irq_addr;
+		uint16_t trn_addr;
+		uint16_t trn_fifo;
 		uint16_t spucnt;
-		uint16_t ramdtc;
+		uint16_t trn_ctrl;
 		uint16_t spustat;
-		uint32_t cdaivol;
-		uint32_t extivol;
-		uint32_t currvol;
+		uint32_t cdin_vol;
+		uint32_t extin_vol;
+		uint32_t current_vol;
 		uint32_t unk_dbc;
 		uint16_t dapf1;
 		uint16_t dapf2;
-		int16_t  viir;
-		int16_t  vcomb1;
-		int16_t  vcomb2;
-		int16_t  vcomb3;
-		int16_t  vcomb4;
-		int16_t  vwall;
-		int16_t  vapf1;
-		int16_t  vapf2;
+		 int16_t viir;
+		 int16_t vcomb1;
+		 int16_t vcomb2;
+		 int16_t vcomb3;
+		 int16_t vcomb4;
+		 int16_t vwall;
+		 int16_t vapf1;
+		 int16_t vapf2;
 		uint16_t mlsame;
 		uint16_t mrsame;
 		uint16_t mlcomb1;
@@ -74,17 +72,45 @@ struct psx_spu {
 		uint16_t mrapf1;
 		uint16_t mlapf2;
 		uint16_t mrapf2;
-		int16_t  vlin;
-		int16_t  vrin;
-		// maybe some other stuff
+		 int16_t vlin;
+		 int16_t vrin;
 	} regs;
+
+	uint32_t transfer_addr;
+	uint8_t* mem;
+	struct {
+		uint32_t current_addr;
+		uint32_t repeat_addr;
+		uint16_t pitch_counter;
+		struct {
+			int16_t buf[28];
+			uint32_t off;
+		} dec;
+		int16_t hist[2];
+		int16_t sample[4];
+	} voice_state[24];
+	struct {
+		uint16_t buf[32];
+		int idx;
+	} tfifo;
+	struct {
+		uint32_t write_off;
+		uint32_t read_off;
+		uint32_t available;
+		uint32_t capacity;
+		int16_t* buf;
+	} out;
 
 	struct psx_system* sys;
 };
 
 void psx_spu_init(struct psx_spu* spu);
 void psx_spu_reset(struct psx_spu* spu);
-void psx_spu_set_log_level(int level);
+void psx_spu_direct_in(struct psx_spu* spu, uint32_t word);
+uint32_t psx_spu_direct_out(struct psx_spu* spu);
+uint32_t psx_spu_available_samples(struct psx_spu* spu);
+void psx_spu_read_samples(struct psx_spu* spu, void* buf, uint32_t count);
+int16_t psx_spu_pop_sample(struct psx_spu* spu);
 
 uint32_t psx_spu_read32(struct psx_region* reg, uint32_t addr);
 void psx_spu_write32(struct psx_region* reg, uint32_t addr, uint32_t val);

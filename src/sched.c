@@ -12,22 +12,15 @@ void psx_sched_add_ev(struct psx_sched* sched, struct psx_sev* ev) {
 		return;
 	}
 
-	struct psx_sev* prev = sched->ev_list;
-	if(prev->next == NULL) {
-		if(ev->clocks_left < prev->clocks_left) {
-			ev->next = prev;
-			sched->ev_list = ev;
-		} else {
-			prev->next = ev;
-			ev->next = NULL;	
-		}
-		return;
-	}
-
-	struct psx_sev* current = sched->ev_list->next;
+	struct psx_sev* prev = NULL;
+	struct psx_sev* current = sched->ev_list;
 	while(1) {
 		if(ev->clocks_left < current->clocks_left) {
-			prev->next = ev;
+			if(prev) {
+				prev->next = ev;
+			} else {
+				sched->ev_list = ev;
+			}
 			ev->next = current;
 			break;
 		}
@@ -61,9 +54,12 @@ void psx_sched_remove_ev(struct psx_sched* sched, uint8_t id) {
 
 void psx_sched_update(struct psx_sched* sched, uint32_t clocks) {
 	sched->clocks_elapsed += clocks;
-	struct psx_sev* ev = sched->ev_list;
+	struct psx_sev* next, *ev = sched->ev_list;
 	while(ev && sched->clocks_elapsed >= ev->clocks_left) {
+		// the current event callback may change its position in the list
+		// as such we need to capture the next element to check first
+		next = ev->next;
 		ev->trigger(sched, ev);
-		ev = ev->next;
+		ev = next;
 	}
 }

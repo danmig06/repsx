@@ -1,6 +1,7 @@
 #include <psx/dma.h>
 #include <psx/irq.h>
 #include <psx/mdec.h>
+#include <psx/spu.h>
 
 #include <string.h>
 
@@ -159,7 +160,7 @@ uint32_t fetch_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum 
 		word |= psx_mem_read8(dmac->sys->memory, 0x1f801802) << 24;
 		return word;
 	case DMACHN_SPU:
-		break;
+		return psx_spu_direct_out(dmac->sys->spu);
 	case DMACHN_PIO:
 		break;
 	case DMACHN_OTC:
@@ -189,6 +190,7 @@ void write_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum dmac
 	case DMACHN_CDROM:
 		break;
 	case DMACHN_SPU:
+		psx_spu_direct_in(dmac->sys->spu, data);
 		break;
 	case DMACHN_PIO:
 		break;
@@ -317,13 +319,8 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		}
 		break;
 	case DMACHN_SPU:
-		// many games won't start if they get no feedback
-		log_error("Unhandled DMACHN_SPU (write=%d) transfer (IRQ triggered)", (chn->ctrl & CHCR_DIR) != 0);
 		chn->ctrl &= ~CHCR_FORCE;
-		// CAUTION: Dead or Alive uses sound RAM to store pointers and
-		// other sensitive stuff, and will crash after some amount of time
-		// during a battle
-		chn->start_addr += transfer_size(*chn) * ((chn->ctrl & CHCR_INC) ? -1 : 1);
+		do_dev_blkcopy(dmac, channel);
 		break;
 	case DMACHN_PIO:
 		log_error("Unhandled DMACHN_PIO transfer");

@@ -4,9 +4,6 @@
 
 #include <stdbool.h>
 
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#define SAT(v, a, b) (((v) < (a)) ? (a) : (((v) > (b)) ? (b) : (v)))
-
 #define VX(i) cpu->gte_regs.v[i].x
 #define VY(i) cpu->gte_regs.v[i].y
 #define VXY(i) cpu->gte_regs.v[i].xy
