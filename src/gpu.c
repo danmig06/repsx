@@ -88,8 +88,8 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	int h_shift = (gpu->gpustat & GPUSTAT_VINTERLACE) && (gpu->gpustat & GPUSTAT_VRES);
 	int overscan = OVERSCAN_SIZE << h_shift;
 	int w = (((gpu->display_area.x2 - gpu->display_area.x1) / dotclock_div) + 2) & (~3);
-	int h = ((gpu->display_area.y2 - gpu->display_area.y1) - overscan) << h_shift;
-	gpu->renderer.update(&gpu->renderer, gpu->display_area.x, gpu->display_area.y + overscan, w, h, (gpu->gpustat & GPUSTAT_RGB24EN));
+	int h = (gpu->display_area.y2 - gpu->display_area.y1) << h_shift;
+	gpu->renderer.update(&gpu->renderer, gpu->display_area.x, gpu->display_area.y + overscan, w, h - (overscan * 2), (gpu->gpustat & GPUSTAT_RGB24EN));
 	psx_sched_remove_ev(sched, self->id);
 	psx_sched_add_ev(sched, &vblank_event);
 }

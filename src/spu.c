@@ -1,6 +1,7 @@
 #include <psx/spu.h>
 #include <psx/memory.h>
 #include <psx/sched.h>
+#include <psx/irq.h>
 
 #include "util.h"
 #include "log.h"
@@ -8,11 +9,23 @@
 
 #include <string.h>
 
+#define ENV_COUNTER_MAX (1 << 21)
+
 enum {
 	ADPCM_CUR,
 	ADPCM_OLD,
 	ADPCM_OLDER,
 	ADPCM_OLDEST
+};
+
+enum {
+	DIR_INCREASING = 0,
+	DIR_DECREASING = 1
+};
+
+enum {
+	MODE_LINEAR = 0,
+	MODE_EXPONENTIAL = 1	
 };
 
 static int16_t g_gauss_table[] = {
@@ -108,16 +121,25 @@ void psx_spu_reset(struct psx_spu* spu) {
 	memset(&spu->voice_state, 0, sizeof(spu->voice_state));
 	spu->regs.endx = 0xffffff;
 	spu->tfifo.idx = 0;
-	spu->out.available = 0;
 	spu->out.read_off = 0;
 	spu->out.write_off = 0;
+}
+
+static void* spu_get_ptr(struct psx_spu* spu, uint32_t addr) {
+	if((spu->regs.spucnt & CNT_IRQ_EN) && addr == (spu->regs.irq_addr * 8)) {
+		// log_error("SPU: IRQ triggered");
+		spu->regs.spustat |= STAT_IRQ;
+		psx_irq_raise(spu->sys->irq, PSX_IRQ_ID_SPU);
+	}
+
+	return &spu->mem[addr];
 }
 
 static int g_adpcm_fc_old[] = { 0, 60, 115, 98, 122 };
 static int g_adpcm_fc_older[] = { 0, 0, 52, 55, 60 };
 
-static void adpcm_decode_block(struct psx_spu* spu, int n) {
-	uint8_t* src = &spu->mem[spu->voice_state[n].current_addr];
+static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
+	uint8_t* src = spu_get_ptr(spu, spu->voice_state[n].current_addr);
 	uint16_t block_header = src[0] | (src[1] << 8);
 	src += 2;
 
@@ -159,8 +181,9 @@ static void adpcm_decode_block(struct psx_spu* spu, int n) {
 		spu->voice_state[n].current_addr = spu->voice_state[n].repeat_addr;
 
 		if(!(block_header & ADP_LOOP_REPEAT)) {
-			// TODO: set envelope phase to Release and volume to 0
+			spu->voice_state[n].env.level = 0;
 			// key off
+			spu->voice_state[n].env.phase = PHASE_RELEASE;
 			spu->regs.endx |= BIT(n);
 		}
 	} else {
@@ -168,11 +191,66 @@ static void adpcm_decode_block(struct psx_spu* spu, int n) {
 	}
 }
 
-static int16_t vol_mult(int32_t sample, int32_t vol) {
+static void spu_key_on(struct psx_spu* spu, uint32_t new) {
+	for(int i = 0; i < 24; i++) {
+		if(new & BIT(i)) {
+			spu->voice_state[i].current_addr = spu->regs.voice[i].start_address * 8;
+			spu->voice_state[i].repeat_addr = spu->regs.voice[i].repeat_address * 8;
+			spu->voice_state[i].pitch_counter = 0;
+			spu->voice_state[i].dec.off = 0;
+			spu->voice_state[i].env.level = 0;
+			spu->voice_state[i].env.phase = PHASE_ATTACK;
+			spu_adpcm_decode_block(spu, i);
+		}
+	}
+	spu->regs.endx &= ~new;
+}
+
+static void spu_key_off(struct psx_spu* spu, uint32_t new) {
+	for(int i = 0; i < 24; i++) {
+		if(new & BIT(i)) {
+			spu->voice_state[i].env.phase = PHASE_RELEASE;
+		}
+	}
+	spu->regs.endx |= new;
+}
+
+static inline int16_t vol_mult(int32_t sample, int32_t vol) {
 	return (sample * vol) >> 15;
 }
 
-static int16_t spu_process_voice(struct psx_spu* spu, int n) {
+static void spu_update_phase(struct psx_spu* spu, int n) {
+	int phase = spu->voice_state[n].env.phase;
+	uint16_t level = spu->voice_state[n].env.level;
+	int sustain_level = (ADSR_STN_LVL_GET(spu->regs.voice[n].adsr) + 1) * 0x800;
+
+	if(phase == PHASE_ATTACK && level == 0x7fff) {
+		spu->voice_state[n].env.phase = PHASE_DECAY;
+	}
+
+	if(phase == PHASE_DECAY && level <= sustain_level) {
+		spu->voice_state[n].env.phase = PHASE_SUSTAIN;
+	}
+}
+
+static void spu_env_update(struct psx_spu* spu, int n, int dir, int mode, int shift, int step) {
+	int32_t lvl = spu->voice_state[n].env.level;
+	step = 7 - step;
+	if(dir == DIR_DECREASING) {
+		step = ~step;
+	}
+
+	step <<= MAX(0, 11 - shift);
+
+	if(dir == DIR_DECREASING && mode == MODE_EXPONENTIAL) {
+		step = (step * lvl) >> 15;
+	}
+
+	spu->voice_state[n].env.level = SAT(lvl + step, 0, 0x7fff);
+	spu->regs.voice[n].adsr_volume = spu->voice_state[n].env.level;
+}
+
+static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	uint32_t pitch_step = spu->regs.voice[n].sample_rate;
 	// the sample rate value is basically the fixed point ratio of the current rate over 44100Hz (the max is 4x speed)
 	// with a 12 bit fractional part, so we can treat the pitch counter as such and extract the integer part to compute the current step 
@@ -182,62 +260,85 @@ static int16_t spu_process_voice(struct psx_spu* spu, int n) {
 
 	spu->voice_state[n].pitch_counter += pitch_step;
 	// TODO: pitch modulation
-	spu->voice_state[n].dec.off += spu->voice_state[n].pitch_counter >> 12;
+	int sample_step = spu->voice_state[n].pitch_counter >> 12;
+	spu->voice_state[n].dec.off += sample_step;
 	spu->voice_state[n].pitch_counter &= 0xfff;
 	if(spu->voice_state[n].dec.off >= 28) {
-		adpcm_decode_block(spu, n);
+		spu_adpcm_decode_block(spu, n);
 		spu->voice_state[n].dec.off -= 28;
 	}
 
-	spu->voice_state[n].sample[ADPCM_OLDEST] = spu->voice_state[n].sample[ADPCM_OLDER];
-	spu->voice_state[n].sample[ADPCM_OLDER]  = spu->voice_state[n].sample[ADPCM_OLD];
-	spu->voice_state[n].sample[ADPCM_OLD]    = spu->voice_state[n].sample[ADPCM_CUR];
-	spu->voice_state[n].sample[ADPCM_CUR]    = spu->voice_state[n].dec.buf[spu->voice_state[n].dec.off];
+	if(sample_step > 0) {
+		spu->voice_state[n].sample[ADPCM_OLDEST] = spu->voice_state[n].sample[ADPCM_OLDER];
+		spu->voice_state[n].sample[ADPCM_OLDER]  = spu->voice_state[n].sample[ADPCM_OLD];
+		spu->voice_state[n].sample[ADPCM_OLD]    = spu->voice_state[n].sample[ADPCM_CUR];
+		spu->voice_state[n].sample[ADPCM_CUR]    = spu->voice_state[n].dec.buf[spu->voice_state[n].dec.off];
+	}
+
 	uint32_t interp_idx = (spu->voice_state[n].pitch_counter >> 4) & 0xff;
 	int32_t new_sample;
 	new_sample  = (g_gauss_table[0x0ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDEST]) >> 15;
 	new_sample += (g_gauss_table[0x1ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDER] ) >> 15;
 	new_sample += (g_gauss_table[0x100 + interp_idx] * spu->voice_state[n].sample[ADPCM_OLD]   ) >> 15;
 	new_sample += (g_gauss_table[0x000 + interp_idx] * spu->voice_state[n].sample[ADPCM_CUR]   ) >> 15;
-	// TODO: apply volume modifiers
-	return new_sample;
-}
+	new_sample = vol_mult(new_sample, spu->voice_state[n].env.level);
+	sample_t out = {
+		.l = vol_mult(new_sample, spu->regs.voice[n].lvolume << 1),
+		.r = vol_mult(new_sample, spu->regs.voice[n].rvolume << 1)
+	};
 
-static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
-	struct psx_spu* spu = sched->sys->spu;
+	int direction, mode, shift, step;
+	switch(spu->voice_state[n].env.phase) {
+	case PHASE_ATTACK:
+		direction = DIR_INCREASING;
+		mode = (spu->regs.voice[n].adsr & ADSR_ATK_MODE) != 0;
+		shift = ADSR_ATK_SH_GET(spu->regs.voice[n].adsr);
+		step = ADSR_ATK_STEP_GET(spu->regs.voice[n].adsr);
+		break;
+	case PHASE_DECAY:
+		direction = DIR_DECREASING;
+		mode = MODE_EXPONENTIAL;
+		shift = ADSR_DEC_SH_GET(spu->regs.voice[n].adsr);
+		step = 0;
+		break;
+	case PHASE_SUSTAIN:
+		direction = (spu->regs.voice[n].adsr & ADSR_STN_DIR) != 0;
+		mode = (spu->regs.voice[n].adsr & ADSR_STN_MODE) != 0;
+		shift = ADSR_STN_SH_GET(spu->regs.voice[n].adsr);
+		step = ADSR_STN_STEP_GET(spu->regs.voice[n].adsr);
+		break;
+	case PHASE_RELEASE:
+		direction = DIR_DECREASING;
+		mode = (spu->regs.voice[n].adsr & ADSR_REL_MODE) != 0;
+		shift = ADSR_REL_SH_GET(spu->regs.voice[n].adsr);
+		step = 0;
+		break;
+	default:
+		return out;
+	}
 
-	int32_t mixed_sample = 0; 
-	for(int i = 0; i < 24; i++) {
-		// TODO: actually, playback ends when in Release with volume (L and R) = 0, not just in a Key-OFF state
-		if(VOICE_KEY_OFF(spu->regs.endx, i)) {
-			continue;
-		}
-		// log_error("SPU: updating voice %d", i);
-		mixed_sample += spu_process_voice(spu, i) / 8;
+	int32_t decrement = ENV_COUNTER_MAX >> MAX(0, shift - 11);
+	if(direction == DIR_INCREASING && mode == MODE_EXPONENTIAL && spu->voice_state[n].env.level > 0x6000) {
+		decrement >>= 2;
 	}
-	mixed_sample = SAT(mixed_sample, -0x8000, 0x7fff);
-	// TODO: output in the circular output buffer
-	spu->out.buf[spu->out.write_off++] = mixed_sample;
-	spu->out.buf[spu->out.write_off++] = mixed_sample;
-	if(spu->out.write_off == spu->out.capacity) {
-		spu->out.write_off = 0;
+
+	spu->voice_state[n].env.counter -= decrement;
+	if(spu->voice_state[n].env.counter <= 0) {
+		spu->voice_state[n].env.counter = ENV_COUNTER_MAX;
+
+		spu_env_update(spu, n, direction, mode, shift, step);
+		spu_update_phase(spu, n);
 	}
-	if(spu->out.available >= spu->out.capacity) {
-		log_error("SPU: buffer overflow");
-		spu->out.read_off += 2;
-		if(spu->out.read_off >= spu->out.capacity) {
-			spu->out.read_off -= spu->out.capacity;
-		}
-	} else {
-		spu->out.available += 2;
-	}
-	
-	psx_sched_remove_ev(sched, self->id);
-	psx_sched_add_ev(sched, self);
+
+	return out;
 }
 
 uint32_t psx_spu_available_samples(struct psx_spu* spu) {
-	return spu->out.available;
+	if(spu->out.read_off > spu->out.write_off) {
+		return (spu->out.capacity - spu->out.read_off) + spu->out.write_off;
+	} else {
+		return spu->out.write_off - spu->out.read_off;
+	}
 }
 
 void psx_spu_read_samples(struct psx_spu* spu, void* buf, uint32_t count) {
@@ -245,7 +346,6 @@ void psx_spu_read_samples(struct psx_spu* spu, void* buf, uint32_t count) {
 
 	for(uint32_t i = 0; i < count; i++) {
 		dst[i] = spu->out.buf[spu->out.read_off++];
-		spu->out.available--;
 		if(spu->out.read_off == spu->out.capacity) {
 			spu->out.read_off = 0;
 		}
@@ -254,47 +354,69 @@ void psx_spu_read_samples(struct psx_spu* spu, void* buf, uint32_t count) {
 
 int16_t psx_spu_pop_sample(struct psx_spu* spu) {
 	int16_t sample = spu->out.buf[spu->out.read_off++];
-	spu->out.available--;
 	if(spu->out.read_off == spu->out.capacity) {
 		spu->out.read_off = 0;
 	}
 	return sample;
 }
 
+static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
+	struct psx_spu* spu = sched->sys->spu;
+
+	sample_t current;
+	int32_t left = 0, right = 0; 
+	for(int i = 0; i < 24; i++) {
+		/*
+		if(spu->voice_state[i].env.phase == PHASE_RELEASE && spu->voice_state[i].env.level == 0) {
+			continue;
+		}
+		*/
+		// log_error("SPU: updating voice %d", i);
+		current = spu_process_voice(spu, i);
+		left += current.l;
+		right += current.r;
+	}
+	left = SAT(left, -0x8000, 0x7fff);
+	right = SAT(right, -0x8000, 0x7fff);
+	spu->out.buf[spu->out.write_off++] = vol_mult(left,  spu->regs.main_lvolume << 1);
+	spu->out.buf[spu->out.write_off++] = vol_mult(right, spu->regs.main_rvolume << 1);
+	if(spu->out.write_off == spu->out.capacity) {
+		spu->out.write_off = 0;
+	}
+	uint32_t available = psx_spu_available_samples(spu);
+	if(available >= spu->out.capacity) {
+		// log_error("SPU: buffer overflow");
+		spu->out.read_off += 2;
+		if(spu->out.read_off >= spu->out.capacity) {
+			spu->out.read_off -= spu->out.capacity;
+		}
+	}
+	
+	psx_sched_remove_ev(sched, self->id);
+	psx_sched_add_ev(sched, self);
+}
+
+
 void psx_spu_direct_in(struct psx_spu* spu, uint32_t word) {
-	*(uint32_t*)(&spu->mem[spu->transfer_addr]) = word;
+	uint32_t* dst = spu_get_ptr(spu, spu->transfer_addr);
+	*dst = word;
 	spu->transfer_addr = (spu->transfer_addr + 4) & 0x7ffff;
 	spu->regs.trn_addr = spu->transfer_addr / 8;
 }
 
 uint32_t psx_spu_direct_out(struct psx_spu* spu) {
-	uint32_t word = *(uint32_t*)(&spu->mem[spu->transfer_addr]);
+	uint32_t* word = spu_get_ptr(spu, spu->transfer_addr);
 	spu->transfer_addr = (spu->transfer_addr + 4) & 0x7ffff;
 	spu->regs.trn_addr = spu->transfer_addr / 8;
-	return word;
-}
-
-static void do_key_on(struct psx_spu* spu, uint32_t new) {
-	for(int i = 0; i < 24; i++) {
-		if(new & BIT(i)) {
-			spu->voice_state[i].current_addr = spu->regs.voice[i].start_address * 8;
-			spu->voice_state[i].pitch_counter = 0;
-			spu->voice_state[i].dec.off = 0;
-			adpcm_decode_block(spu, i);
-		}
-	}
-}
-
-static void do_key_off(struct psx_spu* spu, uint32_t new) {
-	// set ADSR phase to Release
+	return *word;
 }
 
 static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
 	switch(off) {
 	// we deny writes to Read-Only registers
 	// ENDX
-	case 0x198:
 	case 0x19c:
+	case 0x19e:
 	// SPUSTAT
 	case 0x1ae:
 		return true;
@@ -303,8 +425,7 @@ static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
 	case 0x18a: {
 		int shift = ((off & 2) != 0) ? 16 : 0;
 		uint32_t on = (val << shift) & 0xffffff;
-		do_key_on(spu, on);
-		spu->regs.endx &= ~on;
+		spu_key_on(spu, on);
 		break;
 	}
 	// KOFF
@@ -312,8 +433,7 @@ static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
 	case 0x18e: {
 		int shift = ((off & 2) != 0) ? 16 : 0;
 		uint32_t off = (val << shift) & 0xffffff;
-		// do_key_off(spu, off);
-		spu->regs.endx |= off;
+		spu_key_off(spu, off);
 		break;
 	}
 	// TADDR
@@ -334,18 +454,21 @@ static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
 
 		int mode = CNT_TRN_MODE_GET(val);
 		if(mode == 1) {
-			uint16_t* dst = (uint16_t*)(&spu->mem[spu->transfer_addr]);
+			uint16_t* dst = spu_get_ptr(spu, spu->transfer_addr);
+
 			for(int i = 0; i < spu->tfifo.idx; i++) {
+				if(spu->transfer_addr % 8 == 0) {
+					// "touch" the current 8-aligned block address to trigger potential IRQs
+					(void) spu_get_ptr(spu, spu->transfer_addr);
+				}
 				dst[i] = spu->tfifo.buf[i];
 				spu->transfer_addr += 2;
 			}
 			spu->regs.trn_addr = spu->transfer_addr / 8;
-			spu->tfifo.idx = 0;
-		} else if(mode > 1) {
-			// ensure no stale data is left after the transfer,
-			// since we avoid using the transfer fifo during DMA
-			spu->tfifo.idx = 0;
 		}
+		// for DMA modes, this ensures no stale data is left after the transfer,
+		// since we avoid using the transfer fifo during DMA
+		spu->tfifo.idx = 0;
 		break;
 	default:
 		break;
@@ -364,9 +487,7 @@ uint32_t psx_spu_read32(struct psx_region* reg, uint32_t addr) {
 		return 0;
 	}
 
-	uint32_t val;
-	memcpy(&val, &regs[register_offset], sizeof(val));
-	log_trace("SPU read32 (0x%08x) (offset <0x%x>)", val, register_offset);
+	uint32_t val = *(uint32_t*)(&regs[register_offset]);
 	return val;
 }
 
@@ -380,11 +501,10 @@ void psx_spu_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 		return;
 	}
 
-	log_trace("SPU write32 (0x%08x) (offset <0x%x>)", val, register_offset);
 	if(spu_handle_write(spu, register_offset, val)) {
 		return;
 	}
-	memcpy(&regs[register_offset], &val, sizeof(val));
+	*(uint32_t*)(&regs[register_offset]) = val;
 }
 
 uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
@@ -397,9 +517,7 @@ uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
 		return 0;
 	}
 
-	uint16_t val;
-	memcpy(&val, &regs[register_offset], sizeof(val));
-	log_trace("SPU read16 (0x%04x) (offset <0x%x>)", val, register_offset);
+	uint16_t val = *(uint16_t*)(&regs[register_offset]);
 	return val;
 }
 
@@ -413,11 +531,10 @@ void psx_spu_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 		return;
 	}
 
-	log_trace("SPU write16 (0x%04x) (offset <0x%x>)", val, register_offset);
 	if(spu_handle_write(spu, register_offset, val)) {
 		return;
 	}
-	memcpy(&regs[register_offset], &val, sizeof(val));
+	*(uint16_t*)(&regs[register_offset]) = val;
 }
 
 uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
@@ -430,14 +547,12 @@ uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
 		return 0;
 	}
 
-	uint16_t val;
-	memcpy(&val, &regs[register_offset], sizeof(val));
-	log_trace("SPU read8 (0x%02x) (offset <0x%x>)", val, register_offset);
+	uint8_t val = regs[register_offset];
 	return val;
 }
 
 void psx_spu_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
-	log_error("Unhandled SPU read8 (0x%02x -> offset <0x%x>)", val, register_offset);
+	log_error("Unhandled SPU write8 (0x%02x -> offset <0x%x>)", val, register_offset);
 }
 

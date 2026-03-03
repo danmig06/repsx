@@ -18,7 +18,7 @@ struct psx_spu {
 			uint16_t start_address;
 			uint32_t adsr;
 			 int16_t adsr_volume;
-			uint16_t adsr_repeat;
+			uint16_t repeat_address;
 		} voice[24];
 		 int16_t main_lvolume;
 		 int16_t main_rvolume;
@@ -88,6 +88,11 @@ struct psx_spu {
 		} dec;
 		int16_t hist[2];
 		int16_t sample[4];
+		struct {
+			uint8_t phase;
+			int16_t level;
+			int32_t counter;
+		} env;
 	} voice_state[24];
 	struct {
 		uint16_t buf[32];
@@ -96,7 +101,6 @@ struct psx_spu {
 	struct {
 		uint32_t write_off;
 		uint32_t read_off;
-		uint32_t available;
 		uint32_t capacity;
 		int16_t* buf;
 	} out;

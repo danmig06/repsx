@@ -3,6 +3,13 @@
 
 #include "../util.h"
 
+enum {
+	PHASE_ATTACK = 1,
+	PHASE_DECAY = 2,
+	PHASE_SUSTAIN = 3,
+	PHASE_RELEASE = 0
+};
+
 // ADSR - Attack/Decay/Sustain/Release Control Register
 enum {
 	// Attack Fields
@@ -74,6 +81,8 @@ enum {
 // used to index in NON
 #define VOICE_SOURCE(k, n) ((k) & BIT(n))
 #define PMON_VOICE_GET(o, n) ((o) & BIT(n))
+#define CDEXT_LVOL_GET(o) (((int16_t)((o) << 16)) >> 16)
+#define CDEXT_RVOL_GET(o) ((int16_t)((o) >> 16))
 
 // SPUCNT - SPU CoNTrol register
 enum {
