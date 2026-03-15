@@ -2,6 +2,7 @@
 #include <psx/memory.h>
 #include <psx/sched.h>
 #include <psx/irq.h>
+#include <psx/cdrom.h>
 
 #include "util.h"
 #include "log.h"
@@ -140,6 +141,8 @@ static int g_adpcm_fc_older[] = { 0, 0, 52, 55, 60 };
 
 static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 	uint8_t* src = spu_get_ptr(spu, spu->voice_state[n].current_addr);
+	// touch the mid-block address, games such Valkyrie Profile will hang at random points otherwise
+	(void) spu_get_ptr(spu, spu->voice_state[n].current_addr + 8);
 	uint16_t block_header = src[0] | (src[1] << 8);
 	src += 2;
 
@@ -152,7 +155,7 @@ static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 		filter = 4;
 	}
 	int16_t raw = 0;
-	int16_t sample = 0;
+	int32_t sample = 0;
 	int old_coef = g_adpcm_fc_old[filter];
 	int older_coef = g_adpcm_fc_older[filter];
 	int old_sample;
@@ -160,7 +163,7 @@ static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 	int8_t cur_byte;
 	for(int i = 0; i < 28; i++) {
 		cur_byte = (src[i / 2] >> ((i % 2) * 4)) & 0xf;
-		raw = ((int8_t)((cur_byte & 0xf) << 4)) >> 4;
+		raw = ((int8_t)(cur_byte << 4)) >> 4;
 
 		sample = raw << (12 - shift);
 		old_sample = spu->voice_state[n].hist[ADPCM_CUR];
@@ -174,11 +177,11 @@ static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 	}
 
 	if(block_header & ADP_LOOP_START) {
-		spu->voice_state[n].repeat_addr = spu->voice_state[n].current_addr;
+		spu->regs.voice[n].repeat_address = spu->voice_state[n].current_addr / 8;
 	}
 
 	if(block_header & ADP_LOOP_END) {
-		spu->voice_state[n].current_addr = spu->voice_state[n].repeat_addr;
+		spu->voice_state[n].current_addr = spu->regs.voice[n].repeat_address * 8;
 
 		if(!(block_header & ADP_LOOP_REPEAT)) {
 			spu->voice_state[n].env.level = 0;
@@ -195,7 +198,6 @@ static void spu_key_on(struct psx_spu* spu, uint32_t new) {
 	for(int i = 0; i < 24; i++) {
 		if(new & BIT(i)) {
 			spu->voice_state[i].current_addr = spu->regs.voice[i].start_address * 8;
-			spu->voice_state[i].repeat_addr = spu->regs.voice[i].repeat_address * 8;
 			spu->voice_state[i].pitch_counter = 0;
 			spu->voice_state[i].dec.off = 0;
 			spu->voice_state[i].env.level = 0;
@@ -216,7 +218,7 @@ static void spu_key_off(struct psx_spu* spu, uint32_t new) {
 }
 
 static inline int16_t vol_mult(int32_t sample, int32_t vol) {
-	return (sample * vol) >> 15;
+	return SAT((sample * vol) >> 15, -0x8000, 0x7fff);
 }
 
 static void spu_update_phase(struct psx_spu* spu, int n) {
@@ -251,7 +253,14 @@ static void spu_env_update(struct psx_spu* spu, int n, int dir, int mode, int sh
 }
 
 static sample_t spu_process_voice(struct psx_spu* spu, int n) {
-	uint32_t pitch_step = spu->regs.voice[n].sample_rate;
+	int32_t pitch_step = spu->regs.voice[n].sample_rate;
+	if((spu->regs.pmon & BIT(n)) && n > 0) {
+		log_error("pitch modulating voice %d", n);
+		int16_t prev_output = spu->voice_state[n - 1].sample[ADPCM_CUR];
+		int32_t factor = prev_output + 0x8000;
+		pitch_step = (pitch_step << 16) >> 16;
+		pitch_step = ((pitch_step * factor) >> 15) & 0xffff;
+	}
 	// the sample rate value is basically the fixed point ratio of the current rate over 44100Hz (the max is 4x speed)
 	// with a 12 bit fractional part, so we can treat the pitch counter as such and extract the integer part to compute the current step 
 	if(pitch_step > 0x4000) {
@@ -259,7 +268,6 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	}
 
 	spu->voice_state[n].pitch_counter += pitch_step;
-	// TODO: pitch modulation
 	int sample_step = spu->voice_state[n].pitch_counter >> 12;
 	spu->voice_state[n].dec.off += sample_step;
 	spu->voice_state[n].pitch_counter &= 0xfff;
@@ -281,7 +289,7 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	new_sample += (g_gauss_table[0x1ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDER] ) >> 15;
 	new_sample += (g_gauss_table[0x100 + interp_idx] * spu->voice_state[n].sample[ADPCM_OLD]   ) >> 15;
 	new_sample += (g_gauss_table[0x000 + interp_idx] * spu->voice_state[n].sample[ADPCM_CUR]   ) >> 15;
-	new_sample = vol_mult(new_sample, spu->voice_state[n].env.level);
+	new_sample = (new_sample * spu->voice_state[n].env.level) >> 15;
 	sample_t out = {
 		.l = vol_mult(new_sample, spu->regs.voice[n].lvolume << 1),
 		.r = vol_mult(new_sample, spu->regs.voice[n].rvolume << 1)
@@ -366,20 +374,28 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 	sample_t current;
 	int32_t left = 0, right = 0; 
 	for(int i = 0; i < 24; i++) {
-		/*
-		if(spu->voice_state[i].env.phase == PHASE_RELEASE && spu->voice_state[i].env.level == 0) {
-			continue;
-		}
-		*/
-		// log_error("SPU: updating voice %d", i);
 		current = spu_process_voice(spu, i);
-		left += current.l;
-		right += current.r;
+		if(spu->regs.noise_en & BIT(i)) {
+			log_error("SPU: noise generator is unsupported (voice %d)", i);
+		} else {
+			left += current.l;
+			right += current.r;
+		}
 	}
-	left = SAT(left, -0x8000, 0x7fff);
-	right = SAT(right, -0x8000, 0x7fff);
+	if(!(spu->regs.spucnt & CNT_UNMUTE)) {
+		left = right = 0;
+	}
+
+	if(spu->regs.spucnt & CNT_CD_EN) {
+		int32_t cd_vol = spu->regs.cdin_vol;
+		psx_cdr_sample_t cd = psx_cdr_pop_sample(spu->sys->cdrom);
+		left  += vol_mult(cd.l, (cd_vol << 16) >> 16);
+		right += vol_mult(cd.r, cd_vol >> 16);
+	}
+
 	spu->out.buf[spu->out.write_off++] = vol_mult(left,  spu->regs.main_lvolume << 1);
 	spu->out.buf[spu->out.write_off++] = vol_mult(right, spu->regs.main_rvolume << 1);
+
 	if(spu->out.write_off == spu->out.capacity) {
 		spu->out.write_off = 0;
 	}

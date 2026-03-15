@@ -11,6 +11,10 @@
 #define GPU_VER 1
 #define SE11(v) ((int16_t)((v) << 5) >> 5)
 
+#define gpu_render_poly(gpu, sh, ...) gpu->renderer.poly(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
+#define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct psx_render_args){ __VA_ARGS__ })
+#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
+
 typedef union gp0_color {
 	struct __attribute__((packed)) {
 		uint8_t r;
@@ -508,7 +512,7 @@ void gp0_image_load(struct psx_gpu* gpu) {
 
 	gpu->blit_state.start_x = gpu->blit_state.x;
 	gpu->blit_state.start_y = gpu->blit_state.y;
-	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h);
+	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h, false);
 
 	gpu->cmd.receiving_data = true;
 	gpu->cmd.words_left = (gpu->blit_state.w * gpu->blit_state.h) + 1;
@@ -527,7 +531,7 @@ void gp0_image_store(struct psx_gpu* gpu) {
 	gpu->blit_state.start_x = gpu->blit_state.x;
 	gpu->blit_state.start_y = gpu->blit_state.y;
 	gpu->blit_state.is_read = true;
-	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h);
+	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h, true);
 
 	gpu->gpustat |= GPUSTAT_VRAM_READY;
 

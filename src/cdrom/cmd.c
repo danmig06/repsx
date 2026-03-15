@@ -20,6 +20,13 @@
 #define SECTOR_HDR_OFF 12
 #define IRQ_RETRY_RATE 50
 
+#define XA_MAX_OUTPUT_SAMPLES (((2016 * 2) * 7) / 6)
+#define XA_MAX_OUTPUT_SIZE (XA_MAX_OUTPUT_SAMPLES * sizeof(int16_t))
+
+#define CD_LEFT 0
+#define CD_RIGHT 1
+#define CD_MONO CD_LEFT
+
 struct cdr_event {
 	struct psx_sev ev;
 	uint8_t response[PSX_CDROM_RESPBUF_SIZE];
@@ -49,34 +56,88 @@ typedef struct sector_header {
 	uint8_t mode;
 } sector_hdr_t;
 
-// TODO: move this elsewhere
 typedef struct xa_header {
 	uint8_t file;
 	uint8_t channel;
 	uint8_t submode;
 	uint8_t coding_info;
-
-	/*
-	struct {
-		bool eor: 1;
-		bool is_video: 1;
-		bool is_audio: 1;
-		bool is_data: 1;
-		bool trigger: 1;
-		bool form2: 1;
-		bool realtime: 1;
-		bool eof: 1;
-	} submode;
-
-	struct {
-		uint8_t is_stereo: 2;
-		uint8_t sample_rate: 2;
-		uint8_t sample_bits: 2;
-		bool emphasis: 1;
-		uint8_t unused: 1;
-	} coding_info;
-	*/
 } xa_hdr_t;
+
+static int g_xa_fc_old[] = { 0, 60, 115, 98 };
+static int g_xa_fc_older[] = { 0, 0, 52, 55 };
+
+static int16_t g_zigzag_tables[7][29] = {
+	{
+		 0x0000,  0x0000,  0x0000,  0x0000,
+		 0x0000, -0x0002,  0x000A, -0x0022,
+		 0x0041, -0x0054,  0x0034,  0x0009,
+		-0x010A,  0x0400, -0x0A78,  0x234C,
+		 0x6794, -0x1780,  0x0BCD, -0x0623,
+		 0x0350, -0x016D,  0x006B,  0x000A,
+		-0x0010,  0x0011, -0x0008,  0x0003,
+		-0x0001
+	},
+	{
+		 0x0000,  0x0000,  0x0000, -0x0002,
+		 0x0000,  0x0003, -0x0013,  0x003C,
+		-0x004B,  0x00A2, -0x00E3,  0x0132,
+		-0x0043, -0x0267,  0x0C9D,  0x74BB,
+		-0x11B4,  0x09B8, -0x05BF,  0x0372,
+		-0x01A8,  0x00A6, -0x001B,  0x0005,
+		 0x0006, -0x0008,  0x0003, -0x0001,
+		 0x0000
+	},
+	{
+		 0x0000,  0x0000, -0x0001,  0x0003,
+		-0x0002, -0x0005,  0x001F, -0x004A,
+		 0x00B3, -0x0192,  0x02B1, -0x039E,
+		 0x04F8, -0x05A6,  0x7939, -0x05A6,
+		 0x04F8, -0x039E,  0x02B1, -0x0192,
+		 0x00B3, -0x004A,  0x001F, -0x0005,
+		-0x0002,  0x0003, -0x0001,  0x0000,
+		 0x0000
+	},
+	{
+		 0x0000, -0x0001,  0x0003, -0x0008,
+		 0x0006,  0x0005, -0x001B,  0x00A6,
+		-0x01A8,  0x0372, -0x05BF,  0x09B8,
+		-0x11B4,  0x74BB,  0x0C9D, -0x0267,
+		-0x0043,  0x0132, -0x00E3,  0x00A2,
+		-0x004B,  0x003C, -0x0013,  0x0003,
+		 0x0000, -0x0002,  0x0000,  0x0000,
+		 0x0000
+	},
+	{
+		 0x0001,  0x0003, -0x0008,  0x0011,
+		-0x0010,  0x000A,  0x006B, -0x016D,
+		 0x0350, -0x0623,  0x0BCD, -0x1780,
+		 0x6794,  0x234C, -0x0A78,  0x0400,
+		-0x010A,  0x0009,  0x0034, -0x0054,
+		 0x0041, -0x0022,  0x000A, -0x0001,
+		 0x0000,  0x0001,  0x0000,  0x0000,
+		 0x0000
+	},
+	{
+		 0x0002, -0x0008,  0x0010, -0x0023,
+		 0x002B,  0x001A, -0x00EB,  0x027B,
+		-0x0548,  0x0AFA, -0x16FA,  0x53E0,
+		 0x3C07, -0x1249,  0x080E, -0x0347,
+		 0x015B, -0x0044, -0x0017,  0x0046,
+		-0x0023,  0x0011, -0x0005,  0x0000,
+		 0x0000,  0x0000,  0x0000,  0x0000,
+		 0x0000
+	},
+	{
+		-0x0005,  0x0011, -0x0023,  0x0046,
+		-0x0017, -0x0044,  0x015B, -0x0347,
+		 0x080E, -0x1249,  0x3C07,  0x53E0,
+		-0x16FA,  0x0AFA, -0x0548,  0x027B,
+		-0x00EB,  0x001A,  0x002B, -0x0023,
+		 0x0010, -0x0008,  0x0002,  0x0000,
+		 0x0000,  0x0000,  0x0000,  0x0000,
+		 0x0000
+	}
+};
 
 static void cdr_raise_irq(struct psx_cdrom* cdr, uint8_t ival) {
 	INT_FLAGS_SET(cdr->regs.irq_status, ival);
@@ -95,7 +156,7 @@ static void def_ack_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct cdr_event* self = (struct cdr_event*)_self;
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	if(INT_FLAGS_GET(cdr->regs.irq_status) != 0) {
-		log_error("CDROM: acknowledge should've been delayed");
+		log_debug("CDROM: acknowledge should've been delayed");
 		psx_sched_remove_ev(sched, _self->id);
 		_self->eta = IRQ_RETRY_RATE;
 		psx_sched_add_ev(sched, _self);
@@ -117,7 +178,7 @@ static void def_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct cdr_event* self = (struct cdr_event*)_self;
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	if(INT_FLAGS_GET(cdr->regs.irq_status) != 0) {
-		log_error("CDROM: completion should've been delayed");
+		log_debug("CDROM: completion should've been delayed");
 		psx_sched_remove_ev(sched, _self->id);
 		_self->eta = IRQ_RETRY_RATE;
 		psx_sched_add_ev(sched, _self);
@@ -169,7 +230,9 @@ static uint32_t cdr_get_stop_delay(struct psx_cdrom* cdr) {
 
 static void _cdr_schedule_int_ev(struct psx_cdrom* cdr, struct cdr_event* cdev, int ival, struct psx_sev* ev_fields) {
 	if(cdev->active) {
-		log_error("CDROM: Canceling event because another is already active (busy=%d)", (cdr->regs.ctrl & CTRL_BUSY) != 0);
+		if(cdr->regs.ctrl & CTRL_BUSY) {
+			log_error("CDROM: Canceling event because another is already active (while busy)");
+		}
 		cdr_remove_ev(cdr->sys->sched, cdev);
 	}
 	cdev->ival = ival;
@@ -322,6 +385,7 @@ void CdlSetloc(struct psx_cdrom* cdr) {
 static void play_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) { 
 	struct cdr_event* self = (struct cdr_event*)_self;
 	struct psx_cdrom* cdr = sched->sys->cdrom;
+	// TODO: autopause handling, Rayman will hang othewise, unless you return an error
 	if(cdr->state & STAT_SEEKING) {
 		cdr->state &= ~STAT_SEEKING;
 		cdr->state |= STAT_PLAYING;
@@ -331,7 +395,7 @@ static void play_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 		goto play_end;
 	}
 	if(INT_FLAGS_GET(cdr->regs.irq_status) != 0) {
-		log_error("CDROM: completion should've been delayed");
+		log_debug("CDROM: play completion should've been delayed");
 		delay = IRQ_RETRY_RATE;
 		goto play_end;
 	}
@@ -369,13 +433,13 @@ play_end:
 
 static void play_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
-	// handle the selected track
+	// TODO: handle the selected track
 	// if cdr->next_track == 0 seek to setloc
 	cdr->state |= STAT_SEEKING;
 	put_ack_response(&cdr->state, 1);
 	def_ack_evcb(sched, self);
 
-	uint32_t delay = cdr_get_read_delay(cdr) * 4;
+	uint32_t delay = cdr_get_read_delay(cdr) * 5;
 
 	// kickstart the play loop
 	cdr_schedule_comp_ev(cdr, 1, .trigger = play_comp_evcb, .eta = delay);
@@ -391,12 +455,111 @@ void CdlPlay(struct psx_cdrom* cdr) {
 	cdr_schedule_ack_ev(cdr, 3, .trigger = play_ack_evcb);
 }
 
+static int16_t do_zigzag(struct psx_cdrom* cdr, int ch, int p, int t) {
+	int32_t sum = 0;
+	for(int i = 0; i < 29; i++) {
+		sum += (cdr->xa.resample[ch].buf[(p - i) & 0x1f] * g_zigzag_tables[t][i]) / 0x8000;
+	}
+	return SAT(sum, -0x8000, 0x7fff);
+}
+
+static void cdr_xa_resample(struct psx_cdrom* cdr, int16_t sample, int ch) {
+	cdr->xa.resample[ch].buf[cdr->xa.resample[ch].index++] = sample;
+	if(cdr->xa.resample[ch].index == 32) {
+		cdr->xa.resample[ch].index = 0;
+	}
+
+	int16_t new_sample;
+	cdr->xa.resample[ch].counter--;
+	if(cdr->xa.resample[ch].counter == 0) {
+		cdr->xa.resample[ch].counter = 6;
+		for(int t = 0; t < 7; t++) {
+			new_sample = do_zigzag(cdr, ch, cdr->xa.resample[ch].index, t);
+			cdr->out[ch].buf[cdr->out[ch].write_off++] = new_sample;
+			if(cdr->xa.coding_info & XA_CI_FS) {
+				cdr->out[ch].buf[cdr->out[ch].write_off++] = new_sample;
+			}
+		}
+	}
+}
+
+static void cdr_xa_decode_block(struct psx_cdrom* cdr, uint8_t* src, int blk, int nibble, int ch) {
+	if(cdr->xa.coding_info & XA_CI_8BITS) {
+		log_error("CDROM: XA 8bit sample data is not supported");
+		memset(cdr->out[CD_LEFT].buf, 0, XA_MAX_OUTPUT_SIZE);
+		return;
+	}
+	uint8_t hdr = src[4 + (blk * 2) + nibble];
+
+	int shift = hdr & 0xf;
+	if(shift > 12) {
+		shift = 9;
+	}
+	int filter = (hdr >> 4) & 3;
+
+	int16_t* hist = cdr->xa.hist[ch];
+	int16_t raw = 0;
+	int32_t sample = 0;
+	int old_coef = g_xa_fc_old[filter];
+	int older_coef = g_xa_fc_older[filter];
+	int8_t cur_byte;
+	for(int i = 0; i < 28; i++) {
+		cur_byte = (src[16 + blk + (i * 4)] >> (nibble * 4)) & 0xf;
+		raw = ((int8_t)(cur_byte << 4)) >> 4;
+
+		sample = raw << (12 - shift);
+		sample += ((old_coef * hist[0]) - (older_coef * hist[1]) + 32) / 64;
+
+		hist[1] = hist[0];
+		hist[0] = SAT(sample, -0x8000, 0x7fff);
+		cdr_xa_resample(cdr, hist[0], ch);
+	}
+}
+
+static void cdr_xa_decode_sector(struct psx_cdrom* cdr) {
+	uint8_t* src = cdr->data_queue->buf;
+	cdr->xa.coding_info = src[12 + 4 + 3];
+	bool is_stereo = (cdr->xa.coding_info & XA_CI_SM) != 0;
+	cdr->out[CD_LEFT].read_off = 0;
+	cdr->out[CD_LEFT].write_off = 0;
+	cdr->out[CD_RIGHT].read_off = 0;
+	cdr->out[CD_RIGHT].write_off = 0;
+	src += 12 + 4 + 8;
+	for(int i = 0; i < 18; i++) {
+		for(int blk = 0; blk < 4; blk++) {
+			if(is_stereo) {
+				cdr_xa_decode_block(cdr, src, blk, 0, CD_LEFT);
+				cdr_xa_decode_block(cdr, src, blk, 1, CD_RIGHT);
+			} else {
+				cdr_xa_decode_block(cdr, src, blk, 0, CD_MONO);
+				cdr_xa_decode_block(cdr, src, blk, 1, CD_MONO);
+			}
+		}
+		src += 128;
+	}
+}
+
+static void cdr_handle_xa(struct psx_cdrom* cdr, xa_hdr_t* subheader) {
+	if((cdr->disc_mode & MODE_XA_FILTER)) {
+		if(cdr->xa.file != subheader->file || cdr->xa.channel != subheader->channel) {
+			/*
+			log_error("CDROM: XA sector skipped at LBA %d (file: %d, chan: %d, have: (%d, %d))", cdr->loc - 1, 
+					subheader->file, subheader->channel, cdr->xa.file, cdr->xa.channel);
+			*/
+			return;
+		}
+	}
+
+	cdr->xa.coding_info = subheader->coding_info;
+	cdr_xa_decode_sector(cdr);
+}
+
 static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	struct cdr_event* self = (struct cdr_event*)_self;
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	uint32_t delay;
 	if(INT_FLAGS_GET(cdr->regs.irq_status) != 0) {
-		log_error("CDROM: completion should've been delayed");
+		log_debug("CDROM: read completion should've been delayed");
 		delay = IRQ_RETRY_RATE;
 		goto read_end;
 	}
@@ -419,7 +582,7 @@ static void read_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 	xa_hdr_t* subheader = (void*)&cdr->data_queue->buf[SECTOR_HDR_OFF + sizeof(header)];
 	if(header->mode == 2 && (cdr->disc_mode & MODE_XA)) {
 		if((subheader->submode & XA_SM_AUDIO) && (subheader->submode & XA_SM_REALTIME)) {
-			log_debug("CDROM: XA sector skipped at LBA %d", cdr->loc - 1);
+			cdr_handle_xa(cdr, subheader);
 			goto read_end;
 		}
 	}
@@ -572,9 +735,9 @@ void CdlDemute(struct psx_cdrom* cdr) {
 }
 
 void CdlSetfilter(struct psx_cdrom* cdr) {
-	uint8_t file = cdr_pop_param(cdr);
-	uint8_t chan = cdr_pop_param(cdr);
-	log_debug("CDROM: CdlSetfilter() -> XA file: 0x%02x, XA channel: 0x%02x", file, chan);
+	cdr->xa.file = cdr_pop_param(cdr);
+	cdr->xa.channel = cdr_pop_param(cdr);
+	log_debug("CDROM: CdlSetfilter() -> XA file: 0x%02x, XA channel: 0x%02x", cdr->xa.file, cdr->xa.channel);
 	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3);
 }
@@ -619,7 +782,7 @@ static void seek_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	def_comp_evcb(sched, self);
 }
 
-static void seekl_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
+static void seek_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	// dynamic calculation?? includes a random additional 0.5~1.0ms delay
 	uint32_t completion_delay = cdr_get_read_delay(cdr) * 5;
@@ -643,8 +806,7 @@ static void seekl_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 void CdlSeek(struct psx_cdrom* cdr) {
 	log_debug("CDROM: CdlSeek()");
 
-	put_ack_response(&cdr->state, 1);
-	cdr_schedule_ack_ev(cdr, 3, .trigger = seekl_ack_evcb);
+	cdr_schedule_ack_ev(cdr, 3, .trigger = seek_ack_evcb);
 }
 
 static uint8_t dummy_date[] = { 0x94, 0x09, 0x19, 0xc0 };

@@ -104,7 +104,7 @@ enum {
 #define CNT_NOISE_SH_GET(o) GET_BITS(o, CNT_NOISE_SH, 10)
 #define CNT_NOISE_SH_SET(o, v) SET_BITS(o, v, CNT_NOISE_SH, 10)
 
-	CNT_MUTE       = BIT(14),
+	CNT_UNMUTE     = BIT(14),
 	CNT_ENABLE     = BIT(15)
 };
 

@@ -26,7 +26,7 @@ struct psx_spu {
 		 int16_t revb_rvolume;
 		uint32_t kon;
 		uint32_t koff;
-		uint32_t pitch_en;
+		uint32_t pmon;
 		uint32_t noise_en;
 		uint32_t echo_on;
 		uint32_t endx;
@@ -80,7 +80,6 @@ struct psx_spu {
 	uint8_t* mem;
 	struct {
 		uint32_t current_addr;
-		uint32_t repeat_addr;
 		uint16_t pitch_counter;
 		struct {
 			int16_t buf[28];

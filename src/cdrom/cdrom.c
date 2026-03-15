@@ -8,6 +8,9 @@
 #include "../log.h"
 #include "../rdef/cdrom.h"
 
+#define XA_MAX_OUTPUT_SAMPLES (((2016 * 2) * 7 * 2) / 6)
+#define XA_MAX_OUTPUT_SIZE (XA_MAX_OUTPUT_SAMPLES * sizeof(int16_t))
+
 void psx_cdr_init(struct psx_cdrom* cdr) {
 	psx_cdr_reset(cdr);
 }
@@ -17,7 +20,10 @@ void psx_cdr_reset(struct psx_cdrom* cdr) {
 	cdr->data_queue  = queue_create(PSX_CDROM_DATABUF_SIZE);
 	cdr->resp_queue  = queue_create(PSX_CDROM_RESPBUF_SIZE);
 	cdr->param_queue = queue_create(PSX_CDROM_PARMBUF_SIZE);
+	cdr->out[0].buf = malloc(XA_MAX_OUTPUT_SIZE);
+	cdr->out[1].buf = &cdr->out[0].buf[XA_MAX_OUTPUT_SAMPLES / 2];
 	cdr->state = 0;
+	cdr->vol_ll = cdr->vol_lr = cdr->vol_rr = cdr->vol_rl = 0;
 	cdr->regs.ctrl = CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
 	cdr->loc = 150;
 	cdr->report_absolute = false;
@@ -57,11 +63,11 @@ void cdr_bank0_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		cdr_run_cmd(cdr);
 		break;
 	case 2:
-		log_debug("CDROM: push parameter (%02x)", val);
+		log_debug("CDROM: push parameter (0x%02x)", val);
 		cdr_push_param(cdr, val);
 		break;
 	case 3:
-		// log_trace("CDROM: HPCHCTL write (%02x)", val);
+		// log_trace("CDROM: HCHPCTL write (0x%02x)", val);
 		cdr->regs.hchp_ctrl = val;
 		break;
 	default:
@@ -75,25 +81,80 @@ void cdr_bank1_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		cdr->regs.wr_data = val;
 		break;
 	case 2:
-		// printf("CDROM: IRQ mask set (%02x)", val);
+		// log_debug("CDROM: IRQ mask set (0x%02x)", val);
 		cdr->regs.irq_mask = val;
 		break;
 	case 3:
-		/*
-		struct {
-			uint8_t irqsts_flags: 5;
-			bool xa_buf_clear: 1;
-			bool param_clear: 1;
-			bool decoder_reset: 1;
-		} value;
-		AS_UINT8(value) = val;
-		*/
-		// printf("CDROM: IRQ acknowledged (%02x)", val);
+		// log_debug("CDROM: IRQ acknowledged (0x%02x)", val);
 		cdr->regs.irq_status &= ~(val & (INT_FLAGS | INT_BFEMPT | INT_BFWRDY));
 		break;
 	default:
 		break;
 	}
+}
+
+void cdr_bank2_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
+	switch(off) {
+	case 1:
+		log_debug("CDROM: CI write (0x%02x)", val);
+		break;
+	case 2:
+		log_debug("CDROM: ATV0 write (0x%02x)", val);
+		cdr->regs.atv0 = val;
+		break;
+	case 3:
+		log_debug("CDROM: ATV1 write (0x%02x)", val);
+		cdr->regs.atv1 = val;
+		break;
+	default:
+		break;
+	}
+}
+
+void cdr_bank3_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
+	switch(off) {
+	case 1:
+		log_debug("CDROM: ATV2 write (0x%02x)", val);
+		cdr->regs.atv2 = val;
+		break;
+	case 2:
+		log_debug("CDROM: ATV3 write (0x%02x)", val);
+		cdr->regs.atv3 = val;
+		break;
+	case 3:
+		log_debug("CDROM: ADPCTL write (0x%02x)", val);
+		if(val & ADPCTL_CHANGE) {
+			cdr->vol_ll = cdr->regs.atv0;
+			cdr->vol_lr = cdr->regs.atv1;
+			cdr->vol_rr = cdr->regs.atv2;
+			cdr->vol_rl = cdr->regs.atv3;
+		}
+		cdr->regs.adpctl = val & ~ADPCTL_CHANGE;
+		break;
+	default:
+		break;
+	}
+}
+
+psx_cdr_sample_t psx_cdr_pop_sample(struct psx_cdrom* cdr) {
+	psx_cdr_sample_t s = { 0 };
+	int32_t left = 0, right = 0;
+
+	if(cdr->out[0].read_off < cdr->out[0].write_off) {
+		if(cdr->xa.coding_info & XA_CI_SM) {
+			left = cdr->out[0].buf[cdr->out[0].read_off++];
+			right = cdr->out[1].buf[cdr->out[1].read_off++];
+		} else {
+			left = right = cdr->out[0].buf[cdr->out[0].read_off++];
+		}
+
+		if(!(cdr->regs.adpctl & ADPCTL_XA_MUTE)) {
+			s.l = SAT(((left * cdr->vol_ll) >> 7) + ((right * cdr->vol_rl) >> 7), -0x8000, 0x7fff);
+			s.r = SAT(((left * cdr->vol_lr) >> 7) + ((right * cdr->vol_rr) >> 7), -0x8000, 0x7fff);
+		}
+	}
+
+	return s;
 }
 
 uint16_t psx_cdr_read16(struct psx_region* reg, uint32_t addr) {
@@ -116,7 +177,7 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 		cdr->regs.rd_data = cdr_pop_data(cdr);
 		return cdr->regs.rd_data;
 	case 3:
-		if(CTRL_BANK_GET(cdr->regs.ctrl)) {
+		if(CTRL_BANK_GET(cdr->regs.ctrl) & 1) {
 			log_trace("CDROM: IRQ status read (%02x)", cdr->regs.irq_status);
 			return cdr->regs.irq_status | 0xe0;
 		} else {
@@ -146,10 +207,10 @@ void psx_cdr_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 		cdr_bank1_write(cdr, register_offset, val);
 		break;
 	case 2:
-		log_warn("CDROM: bank2 write (0x%02x) <%s+0x%x>", val, reg->name, register_offset);
+		cdr_bank2_write(cdr, register_offset, val);
 		break;
 	case 3:
-		log_warn("CDROM: bank3 write (0x%02x) <%s+0x%x>", val, reg->name, register_offset);
+		cdr_bank3_write(cdr, register_offset, val);
 		break;
 	default:
 		break;

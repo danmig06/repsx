@@ -24,6 +24,12 @@ enum {
 	HCHP_BFRD = BIT(7)  // BuFfer ReaD request
 };
 
+// ADPCTL - XA-ADPCM Output Control
+enum {
+	ADPCTL_XA_MUTE = BIT(0),
+	ADPCTL_CHANGE  = BIT(5)
+};
+
 // HINTSTS/MSK - Interrupt Status/Mask
 enum {
 	INT_FLAGS = BIT_RANGE(0, 3), // Interrupt Flag (INT1~INT5)
@@ -32,6 +38,14 @@ enum {
 
 	INT_BFEMPT = BIT(3), // Buffer Empty - Unused
 	INT_BFWRDY = BIT(4)  // Buffer Write Ready - Unused
+};
+
+// CI - XA-ADPCM Coding Info Fields
+enum {
+	XA_CI_SM       = BIT(0), // Stereo/Mono     (0=mono, 1=stereo)
+	XA_CI_FS       = BIT(2), // Sample rate     (0=37800Hz, 1=18900Hz)
+	XA_CI_8BITS    = BIT(4), // Bits per sample (0=4bit, 1=8bit)
+	XA_CI_EMPHASIS = BIT(6)  // Emphasis Filter Enable (unused)
 };
 
 // SM - XA-ADPCM Submode
@@ -44,14 +58,6 @@ enum {
 	XA_SM_FORM2    = BIT(5),
 	XA_SM_REALTIME = BIT(6),
 	XA_SM_EOF      = BIT(7)  // End of XA file
-};
-
-// CI - XA-ADPCM Coding Info
-enum {
-	XA_CI_SM       = BIT(0), // Stereo/Mono     (0=mono, 1=stereo)
-	XA_CI_FS       = BIT(2), // Sample rate     (0=37800Hz, 1=18900Hz)
-	XA_CI_8BITS    = BIT(4), // Bits per sample (0=4bit, 1=8bit)
-	XA_CI_EMPHASIS = BIT(6)  // Emphasis Filter Enable
 };
 
 // Stat Byte Flags

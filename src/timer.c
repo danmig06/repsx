@@ -245,6 +245,9 @@ static inline void update_mode(struct psx_timer* tmr, uint32_t idx) {
 
 static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
 	int idx = (off >> 4) & 3;
+	if(idx >= 3) {
+		return 0;
+	}
 	uint32_t val = 0;
 
 	switch(off & 0xf) {
@@ -276,6 +279,9 @@ static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
 
 static void tmr_write(struct psx_timer* tmr, uint32_t off, uint32_t val) {
 	int idx = (off >> 4) & 3;
+	if(idx >= 3) {
+		return;
+	}
 
 	tmr_update(tmr);
 	switch(off & 0xf) {

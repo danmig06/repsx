@@ -53,8 +53,6 @@ typedef struct psx_gpu_vec2 {
 	uint16_t y;
 } psx_gpu_vec2_t;
 
-typedef void (*psx_gpucmdfn_t)(struct psx_gpu*);
-
 typedef struct psx_poly_args {
 	bool is_quad;
 	union {
@@ -102,18 +100,12 @@ struct psx_renderer {
 	void* host_data;
 
 	void (*poly)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
-	#define gpu_render_poly(gpu, sh, ...) gpu->renderer.poly(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
-	
 	void (*rect)(struct psx_renderer*, bool is_textured, struct psx_render_args*);
-	#define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct psx_render_args){ __VA_ARGS__ }) 
-
 	void (*line)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
-	#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
-
 	void (*update)(struct psx_renderer*, int x, int y, int w, int h, bool is_24bit);
 	void (*clip_update)(struct psx_renderer*, unsigned x1, unsigned y1, unsigned x2, unsigned y2);
 	void (*blit)(struct psx_renderer*, int sx, int sy, int dx, int dy, int w, int h);
-	uint16_t* (*get_vram)(struct psx_renderer*, int x, int y, int w, int h);
+	uint16_t* (*get_vram)(struct psx_renderer*, int x, int y, int w, int h, bool is_read);
 	void (*commit_vram)(struct psx_renderer*, uint16_t* vram_rect);
 	void (*dispose_vram)(struct psx_renderer*, uint16_t* vram_rect);
 };
@@ -123,8 +115,8 @@ struct psx_gpu {
 	uint32_t gpustat;
 	struct {
 		union {
-			psx_gpucmdfn_t update;
-			psx_gpucmdfn_t execute;
+			void (*update)(struct psx_gpu*);
+			void (*execute)(struct psx_gpu*);
 		};
 		uint32_t buf[12];
 		unsigned words_left;

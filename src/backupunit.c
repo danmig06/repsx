@@ -70,7 +70,6 @@ enum {
 static void update_write(struct psx_bu* bu, uint8_t val) {
 	switch(bu->command_state) {
 	case BU_STATE_W_ADDRHI:
-		log_error("BU: write started");
 		bu->address = val << 8;
 		bu->response = val;
 		break;
@@ -121,7 +120,6 @@ static void update_write(struct psx_bu* bu, uint8_t val) {
 static void update_read(struct psx_bu* bu, uint8_t val) {
 	switch(bu->command_state) {
 	case BU_STATE_R_ADDRHI:
-		log_error("BU: read started");
 		bu->address = val << 8;
 		break;
 	case BU_STATE_R_ADDRLO:
@@ -138,7 +136,6 @@ static void update_read(struct psx_bu* bu, uint8_t val) {
 		break;
 	case BU_STATE_R_CONFLO:
 		bu->response = bu->address & 0xff;
-		log_error("BU: reading sector %d", bu->address);
 		bu->sector.checksum = (bu->address >> 8) ^ (bu->address & 0xff);
 		if(bu->host.read_sector) {
 			bu->host.read_sector(bu->host.data, bu->address, bu->sector.data);

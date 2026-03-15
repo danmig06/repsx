@@ -38,7 +38,7 @@ sys->memory->map[7] = (struct psx_region){ "dma",         0x1f801080, 0x00000080
 					   .read16 = psx_dmac_read16,   .write16 = psx_dmac_write16,
 					   .read8  = psx_dmac_read8,    .write8  = psx_dmac_write8   };
 
-sys->memory->map[8] = (struct psx_region){ "timer",       0x1f801100, 0x00000030,		sys->timer,
+sys->memory->map[8] = (struct psx_region){ "timer",       0x1f801100, 0x00000040,		sys->timer,
 					   .read32 = psx_tmr_read32,   .write32 = psx_tmr_write32, 
 					   .read16 = psx_tmr_read16,   .write16 = psx_tmr_write16,
 					   .read8  = psx_null_read8,   .write8  = psx_null_write8    };
