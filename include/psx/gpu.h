@@ -31,13 +31,23 @@ enum {
 	PSX_GPU_TEXDEPTH_4BIT = 0,
 	PSX_GPU_TEXDEPTH_8BIT = 1,
 	PSX_GPU_TEXDEPTH_15BIT = 2,
-	PSX_GPU_TEXDEPTH_RESERVED = 3
+	PSX_GPU_TEXDEPTH_RESERVED = 3 // Should behave like 15-bit mode
 };
 
+// Shading Modes
 enum {
 	PSX_RENDERER_SH_FLAT = 0,
 	PSX_RENDERER_SH_GOURAUD = 1,
 	PSX_RENDERER_SH_TEXTURE = 2
+};
+
+// Semi-Transparency Modes - B=Background (Old) Pixel, F=Foreground (New) Pixel
+enum {
+	PSX_RENDERER_ST_HALF = 0, // Half Addition       - (B / 2) + (F / 2)
+	PSX_RENDERER_ST_ADD  = 1, // Addition            - B + F
+	PSX_RENDERER_ST_RSUB = 2, // Reverse Subtraction - B - F
+	PSX_RENDERER_ST_QADD = 3, // Quarter Addition    - B + (F / 4)
+	PSX_RENDERER_ST_NONE = 0xff
 };
 
 typedef struct psx_gpu_vert {

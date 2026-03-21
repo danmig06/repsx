@@ -798,6 +798,7 @@ uint32_t gte_read_register(struct psx_cpu* cpu, uint32_t idx) {
 		return (int32_t)(int16_t)cpu->gte_regs.r[idx];
 	case 28:
 		rgb_rd_update(cpu);
+		/* fallthrough */
 	case 29:
 		return cpu->gte_regs.irgb;
 	case 15:
@@ -852,7 +853,6 @@ void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
 	cpu->gte_cmd.translation_vec = CMD_TX_GET(cpu->gte_cmd.raw);
 	cpu->gte_cmd.mult_vec = CMD_VX_GET(cpu->gte_cmd.raw);
 	cpu->gte_cmd.mult_mat = CMD_MX_GET(cpu->gte_cmd.raw);
-	char* name = NULL;
 	FLAG = 0;
 	switch(CMD_RCODE_GET(cpu->gte_cmd.raw)) {
 	case GTE_RC_RTPS: rtps(cpu, 0, true); cpu->clocks = 15; return;
@@ -905,9 +905,5 @@ void gte_run_cmd(struct psx_cpu* cpu, uint32_t insn) {
 	default:
 		break;
 	}
-
-	fprintf(stderr, "GTE: unhandled %s(sf=%d, lm=%d, tx=%d, vx=%d, mx=%d)\n", 
-			name, cpu->gte_cmd.sf, cpu->gte_cmd.lm, cpu->gte_cmd.translation_vec, 
-			cpu->gte_cmd.mult_vec, cpu->gte_cmd.mult_mat);
 }
 

@@ -18,7 +18,7 @@ sys->memory->map[3] = (struct psx_region){ "memctrl1",    0x1f801000, 0x00000024
 					   .read16 = psx_memctl_read16, .write16 = psx_memctl_write16,
 					   .read8  = psx_memctl_read8,  .write8  = psx_memctl_write8 };
 
-sys->memory->map[4] = (struct psx_region){ "peripheral",  0x1f801040, 0x00000020,		sys->sio,
+sys->memory->map[4] = (struct psx_region){ "sio",         0x1f801040, 0x00000020,		sys->sio,
 					   .read32 = psx_sio_read32,   .write32 = psx_sio_write32, 
 					   .read16 = psx_sio_read16,   .write16 = psx_sio_write16,
 					   .read8  = psx_sio_read8,    .write8  = psx_sio_write8     };

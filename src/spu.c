@@ -13,6 +13,14 @@
 #define ENV_COUNTER_MAX (1 << 21)
 
 enum {
+	CAP_CD_LEFT,
+	CAP_CD_RIGHT,
+	CAP_VOICE1,
+	CAP_VOICE3,
+	CAP_BUF_COUNT
+};
+
+enum {
 	ADPCM_CUR,
 	ADPCM_OLD,
 	ADPCM_OLDER,
@@ -120,6 +128,8 @@ void psx_spu_init(struct psx_spu* spu) {
 void psx_spu_reset(struct psx_spu* spu) {
 	memset(&spu->regs, 0, sizeof(spu->regs));
 	memset(&spu->voice_state, 0, sizeof(spu->voice_state));
+	memset(&spu->noise, 0, sizeof(spu->noise));
+	spu->capture_offset = 0;
 	spu->regs.endx = 0xffffff;
 	spu->tfifo.idx = 0;
 	spu->out.read_off = 0;
@@ -176,7 +186,7 @@ static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 		spu->voice_state[n].dec.buf[i] = spu->voice_state[n].hist[ADPCM_CUR];
 	}
 
-	if(block_header & ADP_LOOP_START) {
+	if(!(spu->loop_ignore & BIT(n)) && (block_header & ADP_LOOP_START)) {
 		spu->regs.voice[n].repeat_address = spu->voice_state[n].current_addr / 8;
 	}
 
@@ -202,6 +212,7 @@ static void spu_key_on(struct psx_spu* spu, uint32_t new) {
 			spu->voice_state[i].dec.off = 0;
 			spu->voice_state[i].env.level = 0;
 			spu->voice_state[i].env.phase = PHASE_ATTACK;
+			spu->loop_ignore &= ~BIT(i);
 			spu_adpcm_decode_block(spu, i);
 		}
 	}
@@ -217,7 +228,17 @@ static void spu_key_off(struct psx_spu* spu, uint32_t new) {
 	spu->regs.endx |= new;
 }
 
-static inline int16_t vol_mult(int32_t sample, int32_t vol) {
+static int16_t* spu_get_capture_ptr(struct psx_spu* spu, int capture) {
+	switch(capture) {
+		default:
+		case CAP_CD_LEFT:  return spu_get_ptr(spu, 0x000 + spu->capture_offset);
+		case CAP_CD_RIGHT: return spu_get_ptr(spu, 0x400 + spu->capture_offset);
+		case CAP_VOICE1:   return spu_get_ptr(spu, 0x800 + spu->capture_offset);
+		case CAP_VOICE3:   return spu_get_ptr(spu, 0xc00 + spu->capture_offset);
+	}
+}
+
+static inline int16_t vol_mult(int32_t sample, int16_t vol) {
 	return SAT((sample * vol) >> 15, -0x8000, 0x7fff);
 }
 
@@ -235,8 +256,7 @@ static void spu_update_phase(struct psx_spu* spu, int n) {
 	}
 }
 
-static void spu_env_update(struct psx_spu* spu, int n, int dir, int mode, int shift, int step) {
-	int32_t lvl = spu->voice_state[n].env.level;
+static int16_t spu_env_tick(int32_t lvl, int dir, int mode, int shift, int step) {
 	step = 7 - step;
 	if(dir == DIR_DECREASING) {
 		step = ~step;
@@ -248,16 +268,38 @@ static void spu_env_update(struct psx_spu* spu, int n, int dir, int mode, int sh
 		step = (step * lvl) >> 15;
 	}
 
-	spu->voice_state[n].env.level = SAT(lvl + step, 0, 0x7fff);
-	spu->regs.voice[n].adsr_volume = spu->voice_state[n].env.level;
+	lvl = SAT(lvl + step, 0, 0x7fff);
+	return lvl;
+}
+
+static int16_t spu_process_noise(struct psx_spu* spu) {
+	spu->noise.signal ^= true;
+	if(!spu->noise.signal) {
+		return spu->noise.level;
+	}
+
+	int step = 4 | CNT_NOISE_STEP_GET(spu->regs.spucnt);
+	int shift = CNT_NOISE_SH_GET(spu->regs.spucnt);
+	spu->noise.timer -= step;
+	if(spu->noise.timer < 0) {
+		int lvl = spu->noise.level;
+		int parity_bit = ((lvl >> 15) & 1) ^ ((lvl >> 12) & 1) ^ ((lvl >> 11) & 1) ^ ((lvl >> 10) & 1) ^ 1;
+		spu->noise.level = (spu->noise.level << 1) | parity_bit;
+
+		spu->noise.timer += 0x20000 >> shift;
+		if(spu->noise.timer < 0) {
+			spu->noise.timer += 0x20000 >> shift;
+		}
+	}
+
+	return spu->noise.level;
 }
 
 static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	int32_t pitch_step = spu->regs.voice[n].sample_rate;
 	if((spu->regs.pmon & BIT(n)) && n > 0) {
-		log_error("pitch modulating voice %d", n);
-		int16_t prev_output = spu->voice_state[n - 1].sample[ADPCM_CUR];
-		int32_t factor = prev_output + 0x8000;
+		int32_t factor = spu->prev_output;
+		factor += 0x8000;
 		pitch_step = (pitch_step << 16) >> 16;
 		pitch_step = ((pitch_step * factor) >> 15) & 0xffff;
 	}
@@ -283,13 +325,27 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 		spu->voice_state[n].sample[ADPCM_CUR]    = spu->voice_state[n].dec.buf[spu->voice_state[n].dec.off];
 	}
 
-	uint32_t interp_idx = (spu->voice_state[n].pitch_counter >> 4) & 0xff;
 	int32_t new_sample;
-	new_sample  = (g_gauss_table[0x0ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDEST]) >> 15;
-	new_sample += (g_gauss_table[0x1ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDER] ) >> 15;
-	new_sample += (g_gauss_table[0x100 + interp_idx] * spu->voice_state[n].sample[ADPCM_OLD]   ) >> 15;
-	new_sample += (g_gauss_table[0x000 + interp_idx] * spu->voice_state[n].sample[ADPCM_CUR]   ) >> 15;
+	if(spu->regs.noise_en & BIT(n)) {
+		new_sample = spu_process_noise(spu);
+	} else {
+		uint32_t interp_idx = (spu->voice_state[n].pitch_counter >> 4) & 0xff;
+		new_sample  = (g_gauss_table[0x0ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDEST]) >> 15;
+		new_sample += (g_gauss_table[0x1ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDER] ) >> 15;
+		new_sample += (g_gauss_table[0x100 + interp_idx] * spu->voice_state[n].sample[ADPCM_OLD]   ) >> 15;
+		new_sample += (g_gauss_table[0x000 + interp_idx] * spu->voice_state[n].sample[ADPCM_CUR]   ) >> 15;
+	}
+
 	new_sample = (new_sample * spu->voice_state[n].env.level) >> 15;
+	spu->prev_output = SAT(new_sample, -0x8000, 0x7fff);
+	if(n == 1) {
+		int16_t* capture_dst = spu_get_capture_ptr(spu, CAP_VOICE1);
+		*capture_dst = spu->prev_output;
+	} else if(n == 3) {
+		int16_t* capture_dst = spu_get_capture_ptr(spu, CAP_VOICE3);
+		*capture_dst = spu->prev_output;
+	}
+
 	sample_t out = {
 		.l = vol_mult(new_sample, spu->regs.voice[n].lvolume << 1),
 		.r = vol_mult(new_sample, spu->regs.voice[n].rvolume << 1)
@@ -334,7 +390,8 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	if(spu->voice_state[n].env.counter <= 0) {
 		spu->voice_state[n].env.counter = ENV_COUNTER_MAX;
 
-		spu_env_update(spu, n, direction, mode, shift, step);
+		spu->voice_state[n].env.level = spu_env_tick(spu->voice_state[n].env.level, direction, mode, shift, step);
+		spu->regs.voice[n].adsr_volume = spu->voice_state[n].env.level;
 		spu_update_phase(spu, n);
 	}
 
@@ -375,26 +432,36 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 	int32_t left = 0, right = 0; 
 	for(int i = 0; i < 24; i++) {
 		current = spu_process_voice(spu, i);
-		if(spu->regs.noise_en & BIT(i)) {
-			log_error("SPU: noise generator is unsupported (voice %d)", i);
-		} else {
-			left += current.l;
-			right += current.r;
-		}
+		left  += current.l;
+		right += current.r;
 	}
 	if(!(spu->regs.spucnt & CNT_UNMUTE)) {
 		left = right = 0;
 	}
 
+	int16_t* cd_left_cap  = spu_get_capture_ptr(spu, CAP_CD_LEFT);
+	int16_t* cd_right_cap = spu_get_capture_ptr(spu, CAP_CD_RIGHT);
 	if(spu->regs.spucnt & CNT_CD_EN) {
 		int32_t cd_vol = spu->regs.cdin_vol;
 		psx_cdr_sample_t cd = psx_cdr_pop_sample(spu->sys->cdrom);
+		*cd_left_cap  = cd.l;
+		*cd_right_cap = cd.r;
 		left  += vol_mult(cd.l, (cd_vol << 16) >> 16);
 		right += vol_mult(cd.r, cd_vol >> 16);
+	} else {
+		*cd_left_cap = *cd_right_cap = 0;
 	}
 
 	spu->out.buf[spu->out.write_off++] = vol_mult(left,  spu->regs.main_lvolume << 1);
 	spu->out.buf[spu->out.write_off++] = vol_mult(right, spu->regs.main_rvolume << 1);
+
+	spu->capture_offset += 2;
+	if(spu->capture_offset == 0x200) {
+		spu->regs.spustat |= STAT_WR_REGION;
+	} else if(spu->capture_offset == 0x400) {
+		spu->capture_offset = 0;
+		spu->regs.spustat &= ~STAT_WR_REGION;
+	}
 
 	if(spu->out.write_off == spu->out.capacity) {
 		spu->out.write_off = 0;
@@ -412,7 +479,6 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 	psx_sched_add_ev(sched, self);
 }
 
-
 void psx_spu_direct_in(struct psx_spu* spu, uint32_t word) {
 	uint32_t* dst = spu_get_ptr(spu, spu->transfer_addr);
 	*dst = word;
@@ -428,7 +494,9 @@ uint32_t psx_spu_direct_out(struct psx_spu* spu) {
 }
 
 static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
-	switch(off) {
+	if((off >> 4) < 24 && (off & 0xf) == 0xe) {
+		spu->loop_ignore |= BIT(off >> 4);
+	} else switch(off) {
 	// we deny writes to Read-Only registers
 	// ENDX
 	case 0x19c:
@@ -467,6 +535,12 @@ static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
 	case 0x1aa:
 		spu->regs.spustat &= 0xffc0;
 		spu->regs.spustat |= val & 0x3f;
+
+		int old_shift = CNT_NOISE_SH_GET(spu->regs.spucnt);
+		int new_shift = CNT_NOISE_SH_GET(val);
+		if(old_shift != new_shift) {
+			spu->noise.timer = 0x20000 >> new_shift;
+		}
 
 		int mode = CNT_TRN_MODE_GET(val);
 		if(mode == 1) {

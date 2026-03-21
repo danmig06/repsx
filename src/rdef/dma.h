@@ -28,7 +28,7 @@ enum {
 
 // DPCR - DMA Primary Control Register
 #define DPCR_EN_GET(o, ch) (((o) >> (((ch) * 4) + 3)) & 1)
-#define DPCR_PR_GET(o, ch) (((o) >> ((ch) * 4)) & 7)
+#define DPCR_PR_GET(o, ch) ((int)(((o) >> ((ch) * 4)) & 7))
 
 // DICR - DMA Interrupt Control Register
 enum {

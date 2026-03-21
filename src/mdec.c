@@ -49,7 +49,7 @@ static uint8_t g_reverse_zigzag[] = {
 
 void psx_mdec_init(struct psx_mdec* mdec) {
 	memset(mdec->lqtab, 0, sizeof(mdec->lqtab));
-	memset(mdec->cqtab, 0, sizeof(mdec->lqtab));
+	memset(mdec->cqtab, 0, sizeof(mdec->cqtab));
 	memset(mdec->scale_table, 0, sizeof(mdec->scale_table));
 	memset(&mdec->dec, 0, sizeof(mdec->dec));
 	memset(&mdec->block, 0, sizeof(mdec->block));
@@ -59,8 +59,8 @@ void psx_mdec_init(struct psx_mdec* mdec) {
 }
 
 void psx_mdec_reset(struct psx_mdec* mdec) {
-	// STAT_DATA_OUT_EMPTY | BLOCK_TYPE_Y
 	// log_error("MDEC: reset");
+	// STAT_DATA_OUT_EMPTY | BLOCK_TYPE_Y
 	mdec->regs.stat = 0x80040000;
 	// abort current command
 	mdec->regs.command = 0;

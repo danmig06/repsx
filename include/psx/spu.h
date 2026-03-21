@@ -94,6 +94,14 @@ struct psx_spu {
 		} env;
 	} voice_state[24];
 	struct {
+		bool signal;
+		int32_t timer;
+		int16_t level;
+	} noise;
+	uint32_t loop_ignore;
+	int16_t prev_output;
+	uint16_t capture_offset;
+	struct {
 		uint16_t buf[32];
 		int idx;
 	} tfifo;

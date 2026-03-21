@@ -221,11 +221,11 @@ static uint32_t cdr_get_stop_delay(struct psx_cdrom* cdr) {
 
 #define cdr_schedule_ack_ev(cdr, ival, ...) \
 	_cdr_schedule_int_ev(cdr, &ack_ev, ival, &(struct psx_sev){ \
-			.eta = cdr_get_avg_delay(cdr), \
+			.eta = (cdr->state & STAT_MOTOR_ON) ? CDROM_CMD_AVG_DELAY : CDROM_CMD_AVG_SDELAY, \
 			.trigger = def_ack_evcb, __VA_ARGS__ })
 #define cdr_schedule_comp_ev(cdr, ival, ...) \
 	_cdr_schedule_int_ev(cdr, &completion_ev, ival, &(struct psx_sev){ \
-			.eta = ack_ev.ev.eta + cdr_get_avg_delay(cdr), \
+			.eta = ack_ev.ev.eta + ((cdr->state & STAT_MOTOR_ON) ? CDROM_CMD_AVG_DELAY : CDROM_CMD_AVG_SDELAY), \
 			.trigger = def_comp_evcb, __VA_ARGS__ })
 
 static void _cdr_schedule_int_ev(struct psx_cdrom* cdr, struct cdr_event* cdev, int ival, struct psx_sev* ev_fields) {
@@ -435,6 +435,19 @@ static void play_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
 	// TODO: handle the selected track
 	// if cdr->next_track == 0 seek to setloc
+	if(cdr->seek.is_pending) {
+		cdr->loc = cdr->seek.loc;
+		cdr->seek.is_pending = false;
+		if(cdr->state & STAT_PLAYING) {
+			cdr->state &= ~STAT_PLAYING;
+			cdr_remove_ev(sched, &completion_ev);
+		}
+		uint8_t cm = BYTE_TO_BCD((cdr->loc / 4500) % 60);
+		uint8_t cs = BYTE_TO_BCD((cdr->loc / 75) % 60);
+		uint8_t cf = BYTE_TO_BCD(cdr->loc % 75);
+		log_debug("-> Play seek to %02x:%02x:%02x", cm, cs, cf);
+	}
+
 	cdr->state |= STAT_SEEKING;
 	put_ack_response(&cdr->state, 1);
 	def_ack_evcb(sched, self);

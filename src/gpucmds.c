@@ -71,10 +71,6 @@ static pos_t make_clut(uint16_t cmd) {
 	return clut;
 }
 
-void gp0_nop(struct psx_gpu* gpu) {
-	return;
-}
-
 void gp0_cache_clear(struct psx_gpu* gpu) {
 	return;
 }
@@ -103,7 +99,7 @@ void gp0_poly(struct psx_gpu* gpu) {
 			(poly.is_gouraud_shaded) ? "gouraud" : "flat",
 			(poly.is_quad) ? "quad" : "triangle");
 	unsigned arg_idx = 1;
-	color_t c[4] = { [0] = { .raw = poly.color0 }, { 0 } };
+	color_t c[4] = { [0] = { .raw = poly.color0 } };
 	pos_t v[4] = { 0 };
 	tex_uv_t tex_data[4] = { 0 };
 	pos_t clut = { 0 };
@@ -168,9 +164,6 @@ void gp0_poly(struct psx_gpu* gpu) {
 		shading_mode = PSX_RENDERER_SH_GOURAUD;
 	}
 
-	if(!gpu->renderer.poly) {
-		return;
-	}
 	psx_gpu_vert_t rv[4] = {
 		{ .x = v[0].x, .y = v[0].y, .color = c[0].raw, .tx = tex_data[0].u, .ty = tex_data[0].v },
 		{ .x = v[1].x, .y = v[1].y, .color = c[1].raw, .tx = tex_data[1].u, .ty = tex_data[1].v },
@@ -179,7 +172,7 @@ void gp0_poly(struct psx_gpu* gpu) {
 	}; 
 	bool use_mask = (gpu->gpustat & GPUSTAT_USEMSK) != 0;
 	bool set_mask = (gpu->gpustat & GPUSTAT_SETMSK) != 0;
-	int st_mode = (poly.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : -1;
+	int st_mode = (poly.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
 	gpu_render_poly(gpu, shading_mode,
 			.poly.v0 = rv[0], .poly.v1 = rv[1], .poly.v2 = rv[2], .poly.v3 = rv[3], .use_mask_bit = use_mask, .set_mask_bit = set_mask,
 			.tex.clut = { clut.x, clut.y }, .tex.page = { texpage.pos.x, texpage.pos.y }, .tex.offset = { gpu->tex_window.off_x, gpu->tex_window.off_y }, 
@@ -266,7 +259,7 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 		if(!gpu->renderer.line) {
 			break;
 		}
-		int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : -1;
+		int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
 		gpu_render_line(gpu, (line.is_gouraud_shaded) ? PSX_RENDERER_SH_GOURAUD : PSX_RENDERER_SH_FLAT, 
 				.line.v0 = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
 				.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw },
@@ -347,10 +340,7 @@ void gp0_line(struct psx_gpu* gpu) {
 		return;
 	}
 
-	if(!gpu->renderer.line) {
-		return;
-	}
-	int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : -1;
+	int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
 	gpu_render_line(gpu, (line.is_gouraud_shaded) ? PSX_RENDERER_SH_GOURAUD : PSX_RENDERER_SH_FLAT, 
 			.line.v0 = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
 			.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw },
@@ -381,7 +371,7 @@ void gp0_rect(struct psx_gpu* gpu) {
 	unsigned arg_idx = 1;
 	pos_t tl;
 	vec2_t size;
-	tex_uv_t tex_data;
+	tex_uv_t tex_data = { 0 };
 	pos_t clut;
 
 	color_t c;
@@ -416,12 +406,9 @@ void gp0_rect(struct psx_gpu* gpu) {
 	texpage_pos.x = GPUSTAT_TPX_GET(gpu->gpustat) * 64;
 	texpage_pos.y = (gpu->gpustat & GPUSTAT_TPY) ? 256 : 0;
 	
-	if(!gpu->renderer.rect) {
-		return;
-	}
 	bool use_mask = (gpu->gpustat & GPUSTAT_USEMSK) != 0;
 	bool set_mask = (gpu->gpustat & GPUSTAT_SETMSK) != 0;
-	int st_mode = (rect.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : -1;
+	int st_mode = (rect.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
 	gpu_render_rect(gpu, rect.is_textured,
 			.rect.v = { .x = tl.x, .y = tl.y, .color = rect.color0, .tx = tex_data.u, .ty = tex_data.v }, .use_mask_bit = use_mask, .set_mask_bit = set_mask,
 			.rect.w = size.x, .rect.h = size.y, .tex.clut = { clut.x, clut.y }, .tex.offset = { gpu->tex_window.off_x, gpu->tex_window.off_y },

@@ -250,7 +250,7 @@ static void handle_write(struct psx_sio* sio, uint32_t off) {
 void psx_sio_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	if(register_offset > 0x10) {
-		log_error("unhandled SIO1 write (0x%08x) at <%s+0x%x>", val, reg->name, addr);
+		log_error("unhandled SIO1 write (0x%08x) at <%s+0x%x>", val, reg->name, register_offset);
 		return;
 	}
 	struct psx_sio* sio = reg->peripheral;
@@ -268,7 +268,7 @@ uint16_t psx_sio_read16(struct psx_region* reg, uint32_t addr) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	struct psx_sio* sio = reg->peripheral;
 	if(register_offset > 0x10) {
-		log_error("unhandled SIO1 read at <%s+0x%x>", reg->name, addr);
+		log_error("unhandled SIO1 read at <%s+0x%x>", reg->name, register_offset);
 		return 0xffff;
 	}
 
@@ -290,7 +290,7 @@ uint16_t psx_sio_read16(struct psx_region* reg, uint32_t addr) {
 void psx_sio_write16(struct psx_region* reg, uint32_t addr, uint16_t val) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	if(register_offset > 0x10) {
-		log_error("unhandled SIO1 write (0x%04x) at <%s+0x%x>", val, reg->name, addr);
+		log_error("unhandled SIO1 write (0x%04x) at <%s+0x%x>", val, reg->name, register_offset);
 		return;
 	}
 	struct psx_sio* sio = reg->peripheral;
