@@ -37,6 +37,10 @@ struct psx_dmac {
 		uint32_t unk1;
 	} regs;
 
+	struct {
+		bool busy;
+	} chnstate[7];
+
 	struct psx_system* sys;
 };
 

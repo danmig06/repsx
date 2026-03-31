@@ -491,10 +491,12 @@ load_end:
 
 void gp0_image_load(struct psx_gpu* gpu) {
 	// command word has no information
-	gpu->blit_state.x = gpu->cmd.buf[1] & 0xffff;
-	gpu->blit_state.y = gpu->cmd.buf[1] >> 16;
+	gpu->blit_state.x = gpu->cmd.buf[1] & 0x3ff;
+	gpu->blit_state.y = (gpu->cmd.buf[1] >> 16) & 0x1ff;
 	gpu->blit_state.w = gpu->cmd.buf[2] & 0xffff;
 	gpu->blit_state.h = gpu->cmd.buf[2] >> 16;
+	gpu->blit_state.w = ((gpu->blit_state.w - 1) & 0x3ff) + 1;
+	gpu->blit_state.h = ((gpu->blit_state.h - 1) & 0x1ff) + 1;
 	gpu->blit_state.is_read = false;
 
 	gpu->blit_state.start_x = gpu->blit_state.x;
@@ -653,7 +655,13 @@ void gp1_display_mode(struct psx_gpu* gpu, uint32_t cmd) {
 }
 
 void gp1_dma_direction(struct psx_gpu* gpu, uint32_t cmd) {
-	GPUSTAT_DMADIR_SET(gpu->gpustat, cmd & 3);
+	int dir = cmd & 3;
+	GPUSTAT_DMADIR_SET(gpu->gpustat, dir);
+	if(dir == 2) {
+		gpu->gpustat |= GPUSTAT_DMAREQ;
+	} else {
+		gpu->gpustat &= ~GPUSTAT_DMAREQ;
+	}
 }
 
 void gp1_set_display_area(struct psx_gpu* gpu, uint32_t cmd) {
@@ -662,8 +670,8 @@ void gp1_set_display_area(struct psx_gpu* gpu, uint32_t cmd) {
 }
 
 void gp1_set_display_hrange(struct psx_gpu* gpu, uint32_t cmd) {
-	gpu->display_area.x1 = cmd & 0xfff; // 10 bits
-	gpu->display_area.x2 = (cmd >> 12) & 0xfff; // 10 bits
+	gpu->display_area.x1 = cmd & 0xfff; // 12 bits
+	gpu->display_area.x2 = (cmd >> 12) & 0xfff; // 12 bits
 }
 
 void gp1_set_display_vrange(struct psx_gpu* gpu, uint32_t cmd) {

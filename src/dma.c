@@ -2,6 +2,7 @@
 #include <psx/irq.h>
 #include <psx/mdec.h>
 #include <psx/spu.h>
+#include <psx/sched.h>
 
 #include <string.h>
 
@@ -9,10 +10,19 @@
 #include "rdef/dma.h"
 #include "log.h"
 #define CHCR_MASK 0x71770503
-#define OTC_CHCR_MASK 0x50000002
+#define OTC_CHCR_MASK 0x51000002
 #define DMACHN_IRQ(dmac, id) ((DICR_CHNFLAGS_GET(dmac->regs.dicr) >> (id)) & 1)
 #define DMACHN_ENABLED(dmac, id) ((DICR_CHNMASK_GET(dmac->regs.dicr) >> (id)) & 1)
 #define DICR_WRITE_MASK 0x00ff807f
+
+#define TO_FP8(n) (uint32_t)((n) * 256.0f)
+#define FROM_FP8(n) ((n) >> 8)
+
+#define LL_HEADER_SETUP_DELAY 8
+#define LL_PACKET_SETUP_DELAY 5
+
+// TODO: instant DMA is kept for comparison's sake and in case issues arise, remove this in a fiew commits
+// #define INSTANT_DMA
 
 enum dmachnidx_t {
 	DMACHN_MDECIN  = 0,
@@ -30,6 +40,51 @@ struct copyvec {
 	uint32_t words_left;
 	int increment;
 };
+
+#ifndef INSTANT_DMA
+
+static void dma_complete_evcb(struct psx_sched* sched, struct psx_sev* self);
+
+static struct psx_sev dma_comp_ev[7] = {
+	{ .id = PSX_SEV_ID_DMAEND + 0x00, .trigger = dma_complete_evcb },
+	{ .id = PSX_SEV_ID_DMAEND + 0x10, .trigger = dma_complete_evcb },
+	{ .id = PSX_SEV_ID_DMAEND + 0x20, .trigger = dma_complete_evcb },
+	{ .id = PSX_SEV_ID_DMAEND + 0x30, .trigger = dma_complete_evcb },
+	{ .id = PSX_SEV_ID_DMAEND + 0x40, .trigger = dma_complete_evcb },
+	{ .id = PSX_SEV_ID_DMAEND + 0x50, .trigger = dma_complete_evcb },
+	{ .id = PSX_SEV_ID_DMAEND + 0x60, .trigger = dma_complete_evcb }
+};
+
+static void dma_complete_evcb(struct psx_sched* sched, struct psx_sev* self) {
+	enum dmachnidx_t channel = self->id >> 4;
+	struct psx_dmac* dmac = sched->sys->dmac;
+	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
+	if(!(chn->ctrl & CHCR_START) && dmac->chnstate[channel].busy) {
+		log_error("DMA: channel %d error", channel);
+	}
+
+	dmac->chnstate[channel].busy = false;
+	// cleared on completion
+	chn->ctrl &= ~CHCR_START;
+	
+	if(dmac->regs.dicr & DICR_BUSERROR) {
+		dmac->regs.dicr |= DICR_IRQ;
+	}
+
+	if((dmac->regs.dicr & DICR_IRQ_EN) && DMACHN_ENABLED(dmac, channel) && !DMACHN_IRQ(dmac, channel)) {
+		dmac->regs.dicr |= DICR_IRQ;
+		int flags = DICR_CHNFLAGS_GET(dmac->regs.dicr);
+		flags |= 1 << channel;
+		DICR_CHNFLAGS_SET(dmac->regs.dicr, flags);
+		// log_error("DMA%d IRQ raised", channel);
+		psx_irq_raise(dmac->sys->irq, PSX_IRQ_ID_DMA);
+	}
+	psx_sched_remove_ev(sched, self->id);
+}
+
+#endif
+
+void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel);
 
 void psx_dmac_init(struct psx_dmac* dmac) {
 	memset(dmac, 0, sizeof(*dmac));
@@ -54,8 +109,12 @@ static void write_dicr(struct psx_dmac* dmac, uint32_t val) {
 	dmac->regs.dicr = (dmac->regs.dicr & ~DICR_WRITE_MASK) | val;
 	DICR_CHNFLAGS_SET(dmac->regs.dicr, updated_flags);
 	uint8_t mask = DICR_CHNMASK_GET(dmac->regs.dicr);
-	if((dmac->regs.dicr & DICR_IRQ_EN) && (updated_flags & mask) != 0) {
-		dmac->regs.dicr |= DICR_IRQ;
+	if((dmac->regs.dicr & DICR_BUSERROR) || ((dmac->regs.dicr & DICR_IRQ_EN) && (updated_flags & mask) != 0)) {
+		if(!(dmac->regs.dicr & DICR_IRQ)) {
+			dmac->regs.dicr |= DICR_IRQ;
+			// log_error("DMA: DICR write IRQ triggered");
+			psx_irq_raise(dmac->sys->irq, PSX_IRQ_ID_DMA);
+		}
 	} else {
 		dmac->regs.dicr &= ~DICR_IRQ;
 	}
@@ -71,6 +130,14 @@ void psx_dmac_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 		memcpy(&regs[register_offset], &val, sizeof(val));
 
 		if(((register_offset >> 2) & 3) == 2) {
+			struct psx_dmac* dmac = reg->peripheral;
+#ifndef INSTANT_DMA
+			if(dmac->chnstate[register_offset >> 4].busy) {
+				// log_error("DMA: transfer canceled");
+				psx_sched_remove_ev(dmac->sys->sched, dma_comp_ev[register_offset >> 4].id);
+			}
+#endif
+			dmac->chnstate[register_offset >> 4].busy = false;
 			psx_dmac_run_transfers(reg->peripheral);
 		}
 	}
@@ -236,7 +303,7 @@ void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	}
 }
 
-void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
+void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel, uint32_t* current_delay) {
 	if(channel != DMACHN_GPU) {
 		panic("linked list mode is not implemented for devices other than GPU");
 	}
@@ -244,6 +311,11 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
 	if((chn->ctrl & CHCR_DIR) != PSX_DMA_DIR_FROM_RAM) {
 		panic("invalid linked list transfer");
+	}
+
+	if(chn->start_addr & 0x800000) {
+		log_warn("DMA: GPU received empty linked list");
+		return;
 	}
 
 	uint32_t addr = chn->start_addr & 0xfffffc;
@@ -256,6 +328,10 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		list_header = psx_mem_read32(dmac->sys->memory, addr);
 
 		items_left = list_header >> 24;
+		*current_delay += (items_left + ((items_left + 15) / 16)) + LL_HEADER_SETUP_DELAY;
+		if(items_left > 0) {
+			*current_delay += LL_PACKET_SETUP_DELAY;
+		}
 
 		while(items_left > 0) {
 			addr = (addr + 4) & 0xfffffc;
@@ -273,7 +349,7 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	}
 }
 
-void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
+void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
 	if(channel == DMACHN_OTC) {
 		// OTC is hardwired differently, it needs special handling
@@ -291,14 +367,16 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		return;
 	}
 
+	uint32_t delay = 0;
+#ifndef INSTANT_DMA
+	uint32_t word_count = transfer_size(*chn);
+#endif
 	switch(channel) {
 	case DMACHN_MDECIN:
-		// log_error("DMA: MDECIN transfer (%d blocks, 0x%x bytes)", chn->bc.n_blocks, chn->bc.block_size);
 		chn->ctrl &= ~CHCR_FORCE;
 		do_dev_blkcopy(dmac, channel);
 		break;
 	case DMACHN_MDECOUT:
-		// log_error("DMA: MDECOUT transfer (%d blocks, 0x%x bytes)", chn->bc.n_blocks, chn->bc.block_size);
 		chn->ctrl &= ~CHCR_FORCE;
 		do_dev_blkcopy(dmac, channel);
 		break;
@@ -307,7 +385,7 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 			chn->ctrl &= ~CHCR_FORCE;
 			do_dev_blkcopy(dmac, channel);
 		} else {
-			do_dev_linked_list(dmac, channel);
+			do_dev_linked_list(dmac, channel, &delay);
 		}
 		break;
 	case DMACHN_CDROM:
@@ -334,6 +412,7 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		break;
 	}
 
+#ifdef INSTANT_DMA
 	// cleared on completion
 	chn->ctrl &= ~CHCR_START;
 	
@@ -349,16 +428,28 @@ void do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		// log_error("DMA IRQ raised");
 		psx_irq_raise(dmac->sys->irq, PSX_IRQ_ID_DMA);
 	}
+#else
+	delay += word_count + ((word_count + 15) / 16);
+	// will fix Valkyrie Profile
+	dma_comp_ev[channel].eta = delay;
+	dmac->chnstate[channel].busy = true;
+	psx_sched_add_ev(dmac->sys->sched, &dma_comp_ev[channel]);
+#endif
 }
 
 void psx_dmac_run_transfers(struct psx_dmac* dmac) {
-	enum dmachnidx_t channel;
-	for(int priority = 7; priority >= 0; priority--) {
-		for(channel = DMACHN_MDECIN; channel < DMACHN_NUM; channel++) {
-			if(priority == DPCR_PR_GET(dmac->regs.dpcr, channel)) {
-				do_transfer(dmac, channel);
+	for(int priority = 0; priority <= 7; priority++) {
+		for(int channel = DMACHN_OTC; channel >= DMACHN_MDECIN; channel--) {
+			if(!dmac->chnstate[channel].busy && priority == DPCR_PR_GET(dmac->regs.dpcr, channel)) {
+				dma_do_transfer(dmac, channel);
 			}
 		}
 	}
+
+#ifdef INSTANT_DMA
+	for(int i = 0; i < 7; i++) {
+		dmac->chnstate[i].busy = false;
+	}
+#endif
 }
 

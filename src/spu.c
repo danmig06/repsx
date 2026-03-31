@@ -12,6 +12,8 @@
 
 #define ENV_COUNTER_MAX (1 << 21)
 
+#define USE_HERMITE 1
+
 enum {
 	CAP_CD_LEFT,
 	CAP_CD_RIGHT,
@@ -103,6 +105,33 @@ static int16_t g_gauss_table[] = {
 	0x593A, 0x5949, 0x5958, 0x5965, 0x5971, 0x597C, 0x5986, 0x598F,
 	0x5997, 0x599E, 0x59A4, 0x59A9, 0x59AD, 0x59B0, 0x59B2, 0x59B3
 };
+
+static int32_t spu_gauss_interp(struct psx_spu* spu, int n) {
+	int32_t new_sample;
+	uint32_t interp_idx = (spu->voice_state[n].pitch_counter >> 4) & 0xff;
+	new_sample  = (g_gauss_table[0x0ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDEST]) >> 15;
+	new_sample += (g_gauss_table[0x1ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDER] ) >> 15;
+	new_sample += (g_gauss_table[0x100 + interp_idx] * spu->voice_state[n].sample[ADPCM_OLD]   ) >> 15;
+	new_sample += (g_gauss_table[0x000 + interp_idx] * spu->voice_state[n].sample[ADPCM_CUR]   ) >> 15;
+	return new_sample;
+}
+
+static int32_t spu_hermite_interp(struct psx_spu* spu, int n) {
+	float y0, y1, y2, y3;
+	y0 = spu->voice_state[n].sample[ADPCM_OLDEST];
+	y1 = spu->voice_state[n].sample[ADPCM_OLDER];
+	y2 = spu->voice_state[n].sample[ADPCM_OLD];
+	y3 = spu->voice_state[n].sample[ADPCM_CUR];
+
+	float x = (spu->voice_state[n].pitch_counter & 0xfff) / 4096.0f;
+
+	float c0 = y1;
+	float c1 = (y2 - y0) * 0.5f;
+	float c2 = y0 - (y1 * 2.5f) + (y2 * 2.0f) - (y3 * 0.5f);
+	float c3 = ((y3 - y0) * 0.5f) + ((y1 - y2) * 1.5f);
+	float res = ((c3 * x + c2) * x + c1) * x + c0;
+	return res;
+}
 
 typedef struct {
 	int16_t l;
@@ -329,11 +358,11 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	if(spu->regs.noise_en & BIT(n)) {
 		new_sample = spu_process_noise(spu);
 	} else {
-		uint32_t interp_idx = (spu->voice_state[n].pitch_counter >> 4) & 0xff;
-		new_sample  = (g_gauss_table[0x0ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDEST]) >> 15;
-		new_sample += (g_gauss_table[0x1ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDER] ) >> 15;
-		new_sample += (g_gauss_table[0x100 + interp_idx] * spu->voice_state[n].sample[ADPCM_OLD]   ) >> 15;
-		new_sample += (g_gauss_table[0x000 + interp_idx] * spu->voice_state[n].sample[ADPCM_CUR]   ) >> 15;
+#if USE_HERMITE
+		new_sample = spu_hermite_interp(spu, n);
+#else
+		new_sample = spu_gauss_interp(spu, n);
+#endif
 	}
 
 	new_sample = (new_sample * spu->voice_state[n].env.level) >> 15;
