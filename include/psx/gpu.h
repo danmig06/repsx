@@ -63,6 +63,12 @@ typedef struct psx_gpu_vec2 {
 	uint16_t y;
 } psx_gpu_vec2_t;
 
+// used for clip and screen update rectangles
+typedef struct psx_gpu_rect {
+	uint16_t x, y;
+	int16_t w, h;
+} psx_gpu_rect_t;
+
 typedef struct psx_poly_args {
 	bool is_quad;
 	union {
@@ -111,11 +117,11 @@ struct psx_renderer {
 
 	void (*poly)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
 	void (*rect)(struct psx_renderer*, bool is_textured, struct psx_render_args*);
-	void (*line)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
-	void (*update)(struct psx_renderer*, int x, int y, int w, int h, bool is_24bit);
-	void (*clip_update)(struct psx_renderer*, unsigned x1, unsigned y1, unsigned x2, unsigned y2);
-	void (*blit)(struct psx_renderer*, int sx, int sy, int dx, int dy, int w, int h);
-	uint16_t* (*get_vram)(struct psx_renderer*, int x, int y, int w, int h, bool is_read);
+	void (*line)(struct psx_renderer*, bool is_gouraud,  struct psx_render_args*);
+	void (*update)(struct psx_renderer*, const psx_gpu_rect_t* rect, bool is_24bit, bool display_enable);
+	void (*clip_update)(struct psx_renderer*, psx_gpu_vec2_t start, psx_gpu_vec2_t end);
+	void (*blit)(struct psx_renderer*, psx_gpu_vec2_t src, psx_gpu_vec2_t dst, int w, int h);
+	uint16_t* (*get_vram)(struct psx_renderer*, const psx_gpu_rect_t* rect, bool is_read);
 	void (*commit_vram)(struct psx_renderer*, uint16_t* vram_rect);
 	void (*dispose_vram)(struct psx_renderer*, uint16_t* vram_rect);
 };

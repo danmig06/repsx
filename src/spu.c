@@ -11,6 +11,7 @@
 #include <string.h>
 
 #define ENV_COUNTER_MAX (1 << 21)
+#define SAT16(n) SAT(n, -0x8000, 0x7fff)
 
 #define USE_HERMITE 1
 
@@ -37,6 +38,16 @@ enum {
 enum {
 	MODE_LINEAR = 0,
 	MODE_EXPONENTIAL = 1	
+};
+
+typedef uint32_t spu_addr_t;
+
+static int16_t g_fir_filter[39] = {
+	-0x0001,  0x0000,  0x0002,  0x0000, -0x000A,  0x0000,  0x0023,  0x0000,
+	-0x0067,  0x0000,  0x010A,  0x0000, -0x0268,  0x0000,  0x0534,  0x0000,
+	-0x0B90,  0x0000,  0x2806,  0x4000,  0x2806,  0x0000, -0x0B90,  0x0000,
+	 0x0534,  0x0000, -0x0268,  0x0000,  0x010A,  0x0000, -0x0067,  0x0000,
+	 0x0023,  0x0000, -0x000A,  0x0000,  0x0002,  0x0000, -0x0001
 };
 
 static int16_t g_gauss_table[] = {
@@ -106,7 +117,7 @@ static int16_t g_gauss_table[] = {
 	0x5997, 0x599E, 0x59A4, 0x59A9, 0x59AD, 0x59B0, 0x59B2, 0x59B3
 };
 
-static int32_t spu_gauss_interp(struct psx_spu* spu, int n) {
+static inline int32_t spu_gauss_interp(struct psx_spu* spu, int n) {
 	int32_t new_sample;
 	uint32_t interp_idx = (spu->voice_state[n].pitch_counter >> 4) & 0xff;
 	new_sample  = (g_gauss_table[0x0ff - interp_idx] * spu->voice_state[n].sample[ADPCM_OLDEST]) >> 15;
@@ -116,22 +127,27 @@ static int32_t spu_gauss_interp(struct psx_spu* spu, int n) {
 	return new_sample;
 }
 
-static int32_t spu_hermite_interp(struct psx_spu* spu, int n) {
-	float y0, y1, y2, y3;
-	y0 = spu->voice_state[n].sample[ADPCM_OLDEST];
-	y1 = spu->voice_state[n].sample[ADPCM_OLDER];
-	y2 = spu->voice_state[n].sample[ADPCM_OLD];
-	y3 = spu->voice_state[n].sample[ADPCM_CUR];
+#define HERMITE_FP_BITS 16
+#define mulh(a, b) (((a) * (b)) >> HERMITE_FP_BITS)
 
-	float x = (spu->voice_state[n].pitch_counter & 0xfff) / 4096.0f;
+static inline int32_t spu_hermite_interp(struct psx_spu* spu, int n) {
+	int64_t y0, y1, y2, y3;
+	y0 = spu->voice_state[n].sample[ADPCM_OLDEST] << HERMITE_FP_BITS;
+	y1 = spu->voice_state[n].sample[ADPCM_OLDER]  << HERMITE_FP_BITS;
+	y2 = spu->voice_state[n].sample[ADPCM_OLD]    << HERMITE_FP_BITS;
+	y3 = spu->voice_state[n].sample[ADPCM_CUR]    << HERMITE_FP_BITS;
 
-	float c0 = y1;
-	float c1 = (y2 - y0) * 0.5f;
-	float c2 = y0 - (y1 * 2.5f) + (y2 * 2.0f) - (y3 * 0.5f);
-	float c3 = ((y3 - y0) * 0.5f) + ((y1 - y2) * 1.5f);
-	float res = ((c3 * x + c2) * x + c1) * x + c0;
-	return res;
+	int64_t x = (spu->voice_state[n].pitch_counter & 0xfff) << (HERMITE_FP_BITS - 12);
+
+	int64_t c0 = y1;
+	int64_t c1 = (y2 - y0) / 2;
+	int64_t c2 = y0 - ((y1 * 5) / 2) + (y2 * 2) - (y3 / 2);
+	int64_t c3 = ((y3 - y0) / 2) + (((y1 - y2) * 3) / 2);
+	int64_t res = mulh(mulh(mulh(c3, x) + c2, x) + c1, x) + c0;
+	return res >> HERMITE_FP_BITS;
 }
+
+#undef mulh
 
 typedef struct {
 	int16_t l;
@@ -151,6 +167,7 @@ void psx_spu_init(struct psx_spu* spu) {
 	spu->mem = malloc(PSX_SPU_MEM_SIZE);
 	spu->out.capacity = PSX_SPU_OUTBUF_SIZE;
 	spu->out.buf = malloc(PSX_SPU_OUTBUF_SIZE * sizeof(*spu->out.buf));
+	memset(&spu->fir_buf, 0, sizeof(spu->fir_buf));
 	psx_sched_add_ev(spu->sys->sched, &spu_update_ev);
 }
 
@@ -165,7 +182,7 @@ void psx_spu_reset(struct psx_spu* spu) {
 	spu->out.write_off = 0;
 }
 
-static void* spu_get_ptr(struct psx_spu* spu, uint32_t addr) {
+static void* spu_get_ptr(struct psx_spu* spu, spu_addr_t addr) {
 	if((spu->regs.spucnt & CNT_IRQ_EN) && addr == (spu->regs.irq_addr * 8)) {
 		// log_error("SPU: IRQ triggered");
 		spu->regs.spustat |= STAT_IRQ;
@@ -211,7 +228,7 @@ static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 		sample += ((old_coef * old_sample) - (older_coef * older_sample) + 32) / 64;
 
 		spu->voice_state[n].hist[ADPCM_OLD] = spu->voice_state[n].hist[ADPCM_CUR];
-		spu->voice_state[n].hist[ADPCM_CUR] = SAT(sample, -0x8000, 0x7fff);
+		spu->voice_state[n].hist[ADPCM_CUR] = SAT16(sample);
 		spu->voice_state[n].dec.buf[i] = spu->voice_state[n].hist[ADPCM_CUR];
 	}
 
@@ -267,8 +284,8 @@ static int16_t* spu_get_capture_ptr(struct psx_spu* spu, int capture) {
 	}
 }
 
-static inline int16_t vol_mult(int32_t sample, int16_t vol) {
-	return SAT((sample * vol) >> 15, -0x8000, 0x7fff);
+static inline int16_t vmult(int32_t sample, int16_t vol) {
+	return SAT16((sample * vol) >> 15);
 }
 
 static void spu_update_phase(struct psx_spu* spu, int n) {
@@ -324,6 +341,129 @@ static int16_t spu_process_noise(struct psx_spu* spu) {
 	return spu->noise.level;
 }
 
+static int16_t spu_revb_read(struct psx_spu* spu, spu_addr_t addr) {
+	spu_addr_t base = spu->regs.mbase * 8;
+
+	spu_addr_t off = ((spu->revb_addr + addr) - base) % (0x80000 - base);
+	int16_t* src = spu_get_ptr(spu, (base + off) & 0x7fffe);
+	return *src;
+}
+
+static void spu_revb_write(struct psx_spu* spu, spu_addr_t addr, int16_t val) {
+	if(spu->regs.spucnt & CNT_REVB_EN) {
+		spu_addr_t base = spu->regs.mbase * 8;
+
+		spu_addr_t off = ((spu->revb_addr + addr) - base) % (0x80000 - base);
+		int16_t* dst = spu_get_ptr(spu, (base + off) & 0x7fffe);
+		*dst = val;
+	}
+}
+
+#define R(a) spu_revb_read(spu, a)
+#define W(a, v) spu_revb_write(spu, a, v)
+
+static sample_t spu_process_reverb(struct psx_spu* spu) {
+	int32_t lv_in = 0, rv_in = 0;
+	// downsample the input
+	int read_off = spu->fir_buf.off;
+	for(int i = 0; i < 39; i++) {
+		lv_in += (spu->fir_buf.in_l[read_off] * g_fir_filter[i]) >> 15;
+		rv_in += (spu->fir_buf.in_r[read_off] * g_fir_filter[i]) >> 15;
+		if(read_off == 0) {
+			read_off = 38;
+		} else {
+			read_off--;
+		}
+	}
+
+	int16_t Lin = vmult(lv_in, spu->regs.vlin);
+	int16_t Rin = vmult(rv_in, spu->regs.vrin);
+
+	if(spu->regs.spucnt & CNT_REVB_EN) {
+		bool viir_sign_flip = spu->regs.viir == -0x8000;
+		spu_addr_t mLSAME = spu->regs.mlsame * 8;
+		spu_addr_t mRSAME = spu->regs.mrsame * 8;
+		spu_addr_t dLSAME = spu->regs.dlsame * 8;
+		spu_addr_t dRSAME = spu->regs.drsame * 8;
+		spu_addr_t mLDIFF = spu->regs.mldiff * 8;
+		spu_addr_t mRDIFF = spu->regs.mrdiff * 8;
+		spu_addr_t dLDIFF = spu->regs.dldiff * 8;
+		spu_addr_t dRDIFF = spu->regs.drdiff * 8;
+		// Same Side Reflection (L-to-L and R-to-R)
+		int16_t same_ll = vmult(Lin + vmult(R(dLSAME), spu->regs.vwall) - R(mLSAME - 2), spu->regs.viir);
+		int16_t same_rr = vmult(Rin + vmult(R(dRSAME), spu->regs.vwall) - R(mRSAME - 2), spu->regs.viir);
+		// Different Side Reflection (R-to-L and L-to-R)
+		int16_t diff_rl = vmult(Lin + vmult(R(dLDIFF), spu->regs.vwall) - R(mLDIFF - 2), spu->regs.viir);
+		int16_t diff_lr = vmult(Rin + vmult(R(dRDIFF), spu->regs.vwall) - R(mRDIFF - 2), spu->regs.viir);
+		W(mLSAME, SAT16(R(mLSAME - 2) + ((viir_sign_flip) ? -same_ll : same_ll)));
+		W(mRSAME, SAT16(R(mRSAME - 2) + ((viir_sign_flip) ? -same_rr : same_rr)));
+		W(mLDIFF, SAT16(R(mLDIFF - 2) + ((viir_sign_flip) ? -diff_rl : diff_rl)));
+		W(mRDIFF, SAT16(R(mRDIFF - 2) + ((viir_sign_flip) ? -diff_lr : diff_lr)));
+	}
+
+	int16_t vCOMB1 = spu->regs.vcomb1;
+	int16_t vCOMB2 = spu->regs.vcomb2;
+	int16_t vCOMB3 = spu->regs.vcomb3;
+	int16_t vCOMB4 = spu->regs.vcomb4;
+	spu_addr_t mLCOMB1 = spu->regs.mlcomb1 * 8;
+	spu_addr_t mLCOMB2 = spu->regs.mlcomb2 * 8;
+	spu_addr_t mLCOMB3 = spu->regs.mlcomb3 * 8;
+	spu_addr_t mLCOMB4 = spu->regs.mlcomb4 * 8;
+	spu_addr_t mRCOMB1 = spu->regs.mrcomb1 * 8;
+	spu_addr_t mRCOMB2 = spu->regs.mrcomb2 * 8;
+	spu_addr_t mRCOMB3 = spu->regs.mrcomb3 * 8;
+	spu_addr_t mRCOMB4 = spu->regs.mrcomb4 * 8;
+	// Early Echo (Comb Filter, with input from buffer)
+	int16_t Lout = SAT16(vmult(R(mLCOMB1), vCOMB1) + vmult(R(mLCOMB2), vCOMB2) + vmult(R(mLCOMB3), vCOMB3) + vmult(R(mLCOMB4), vCOMB4));
+	int16_t Rout = SAT16(vmult(R(mRCOMB1), vCOMB1) + vmult(R(mRCOMB2), vCOMB2) + vmult(R(mRCOMB3), vCOMB3) + vmult(R(mRCOMB4), vCOMB4));
+
+	spu_addr_t mLAPF1 = spu->regs.mlapf1 * 8;
+	spu_addr_t mRAPF1 = spu->regs.mrapf1 * 8;
+	spu_addr_t mLAPF2 = spu->regs.mlapf2 * 8;
+	spu_addr_t mRAPF2 = spu->regs.mrapf2 * 8;
+	spu_addr_t dAPF1 = spu->regs.dapf1 * 8;
+	spu_addr_t dAPF2 = spu->regs.dapf2 * 8;
+	// Late Reverb APF1 (All Pass Filter 1, with input from COMB)
+	Lout = SAT16(Lout - vmult(R(mLAPF1 - dAPF1), spu->regs.vapf1));
+	W(mLAPF1, Lout);
+	Lout = SAT16(vmult(Lout, spu->regs.vapf1) + R(mLAPF1 - dAPF1));
+	Rout = SAT16(Rout - vmult(R(mRAPF1 - dAPF1), spu->regs.vapf1));
+	W(mRAPF1, Rout);
+	Rout = SAT16(vmult(Rout, spu->regs.vapf1) + R(mRAPF1 - dAPF1));
+
+	// Late Reverb APF2 (All Pass Filter 2, with input from APF1)
+	Lout = SAT16(Lout - vmult(R(mLAPF2 - dAPF2), spu->regs.vapf2));
+	W(mLAPF2, Lout);
+	Lout = SAT16(vmult(Lout, spu->regs.vapf2) + R(mLAPF2 - dAPF2));
+	Rout = SAT16(Rout - vmult(R(mRAPF2 - dAPF2), spu->regs.vapf2));
+	W(mRAPF2, Rout);
+	Rout = SAT16(vmult(Rout, spu->regs.vapf2) + R(mRAPF2 - dAPF2));
+
+	// finally increment the reverb address
+	spu_addr_t mbase = spu->regs.mbase * 8;
+	spu->revb_addr = MAX(mbase, (spu->revb_addr + 2) & 0x7fffe);
+
+	spu->fir_buf.out_l[spu->fir_buf.off] = Lout;
+	spu->fir_buf.out_r[spu->fir_buf.off] = Rout;
+	int32_t l_out = 0, r_out = 0;
+	// upsample the output
+	read_off = spu->fir_buf.off;
+	for(int i = 0; i < 39; i++) {
+		l_out += (spu->fir_buf.out_l[read_off] * g_fir_filter[i]) >> 15;
+		r_out += (spu->fir_buf.out_r[read_off] * g_fir_filter[i]) >> 15;
+		if(read_off == 0) {
+			read_off = 38;
+		} else {
+			read_off--;
+		}
+	}
+
+	return (sample_t) {
+		.l = vmult(l_out, spu->regs.revb_lvolume),
+		.r = vmult(r_out, spu->regs.revb_rvolume)
+	};
+}
+
 static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	int32_t pitch_step = spu->regs.voice[n].sample_rate;
 	if((spu->regs.pmon & BIT(n)) && n > 0) {
@@ -366,7 +506,7 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	}
 
 	new_sample = (new_sample * spu->voice_state[n].env.level) >> 15;
-	spu->prev_output = SAT(new_sample, -0x8000, 0x7fff);
+	spu->prev_output = SAT16(new_sample);
 	if(n == 1) {
 		int16_t* capture_dst = spu_get_capture_ptr(spu, CAP_VOICE1);
 		*capture_dst = spu->prev_output;
@@ -376,8 +516,8 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 	}
 
 	sample_t out = {
-		.l = vol_mult(new_sample, spu->regs.voice[n].lvolume << 1),
-		.r = vol_mult(new_sample, spu->regs.voice[n].rvolume << 1)
+		.l = vmult(new_sample, spu->regs.voice[n].lvolume << 1),
+		.r = vmult(new_sample, spu->regs.voice[n].rvolume << 1)
 	};
 
 	int direction, mode, shift, step;
@@ -458,11 +598,16 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_spu* spu = sched->sys->spu;
 
 	sample_t current;
-	int32_t left = 0, right = 0; 
+	int32_t left = 0, right = 0;
+	int32_t revbl = 0, revbr = 0;
 	for(int i = 0; i < 24; i++) {
 		current = spu_process_voice(spu, i);
 		left  += current.l;
 		right += current.r;
+		if(spu->regs.eon & BIT(i)) {
+			revbl += current.l;
+			revbr += current.r;
+		}
 	}
 	if(!(spu->regs.spucnt & CNT_UNMUTE)) {
 		left = right = 0;
@@ -475,14 +620,32 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 		psx_cdr_sample_t cd = psx_cdr_pop_sample(spu->sys->cdrom);
 		*cd_left_cap  = cd.l;
 		*cd_right_cap = cd.r;
-		left  += vol_mult(cd.l, (cd_vol << 16) >> 16);
-		right += vol_mult(cd.r, cd_vol >> 16);
+		cd.l = vmult(cd.l, (cd_vol << 16) >> 16);
+		cd.r = vmult(cd.r, cd_vol >> 16);
+		left  += cd.l;
+		right += cd.r;
+		if(spu->regs.spucnt & CNT_CD_REVB) {
+			revbl += cd.l;
+			revbr += cd.r;
+		}
 	} else {
 		*cd_left_cap = *cd_right_cap = 0;
 	}
 
-	spu->out.buf[spu->out.write_off++] = vol_mult(left,  spu->regs.main_lvolume << 1);
-	spu->out.buf[spu->out.write_off++] = vol_mult(right, spu->regs.main_rvolume << 1);
+	if(!spu->revb_signal) {
+		spu->fir_buf.in_l[spu->fir_buf.off] = revbl;
+	} else {
+		spu->fir_buf.in_r[spu->fir_buf.off] = revbr;
+		sample_t revb_out = spu_process_reverb(spu);
+		left  += revb_out.l;
+		right += revb_out.r;
+
+		spu->fir_buf.off++;
+		if(spu->fir_buf.off == 39) {
+			spu->fir_buf.off = 0;
+		}
+	}
+	spu->revb_signal ^= true;
 
 	spu->capture_offset += 2;
 	if(spu->capture_offset == 0x200) {
@@ -492,16 +655,15 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 		spu->regs.spustat &= ~STAT_WR_REGION;
 	}
 
+	spu->out.buf[spu->out.write_off++] = vmult(left,  spu->regs.main_lvolume << 1);
+	spu->out.buf[spu->out.write_off++] = vmult(right, spu->regs.main_rvolume << 1);
 	if(spu->out.write_off == spu->out.capacity) {
 		spu->out.write_off = 0;
 	}
 	uint32_t available = psx_spu_available_samples(spu);
 	if(available >= spu->out.capacity) {
 		// log_error("SPU: buffer overflow");
-		spu->out.read_off += 2;
-		if(spu->out.read_off >= spu->out.capacity) {
-			spu->out.read_off -= spu->out.capacity;
-		}
+		spu->out.read_off = (spu->out.read_off + 2) % PSX_SPU_OUTBUF_SIZE;
 	}
 	
 	psx_sched_remove_ev(sched, self->id);
@@ -549,6 +711,10 @@ static bool spu_handle_write(struct psx_spu* spu, uint32_t off, uint32_t val) {
 		spu_key_off(spu, off);
 		break;
 	}
+	// MBASE
+	case 0x1a2:
+		spu->revb_addr = val * 8;
+		break;
 	// TADDR
 	case 0x1a6:
 		spu->transfer_addr = val * 8;
@@ -671,7 +837,9 @@ uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr) {
 }
 
 void psx_spu_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
-	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
-	log_error("Unhandled SPU write8 (0x%02x -> offset <0x%x>)", val, register_offset);
+	// 8-bit writes are executed as 16-bit writes
+	if(addr % 2 == 0) {
+		psx_spu_write16(reg, addr, val);
+	}
 }
 

@@ -136,8 +136,6 @@ static void handle_target(struct psx_timer* tmr, int i) {
 		tmr->t[i].mode &= ~MODE_NO_IRQ;
 	}
 
-	// timings are inaccurate, this might be unstable for some games, in that case:
-	// return;
 	bool trigger = (tmr->t[i].mode & MODE_NO_IRQ) == 0;
 	if(!(tmr->t[i].mode & MODE_IRQ_REPEAT)) {
 		if(trigger && !tmr->tstatus[i].irq_triggered) {
@@ -150,7 +148,7 @@ static void handle_target(struct psx_timer* tmr, int i) {
 	tmr->t[i].mode |= MODE_NO_IRQ;
 
 	if(trigger) {
-		log_trace("timer%d: IRQ triggered\n", i);
+		// log_trace("timer%d: IRQ triggered\n", i);
 		psx_irq_raise(tmr->sys->irq, PSX_IRQ_ID_TMR0 << i);
 	}
 }

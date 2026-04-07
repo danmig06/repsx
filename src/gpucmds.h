@@ -4,14 +4,15 @@
 #define GPU_CMD_IDX 0
 #define GPU_CMD_DATA_IDX 1
 
-#define GPU_CMD_POLYLINE_V0 2
-#define GPU_CMD_POLYLINE_C0 3
-#define GPU_CMD_POLYLINE_V1 4
-#define GPU_CMD_POLYLINE_C1 5
+#define GPU_CMD_POLYLINE_VPREV 2
+#define GPU_CMD_POLYLINE_CPREV 3
+#define GPU_CMD_POLYLINE_VCUR  4
+#define GPU_CMD_POLYLINE_CCUR  5
 #define GPU_CMD_POLYLINE_STATE 6
 
 void gp0_cache_clear(struct psx_gpu* gpu);
 void gp0_poly(struct psx_gpu* gpu);
+void gp0_polyline_update(struct psx_gpu* gpu);
 void gp0_line(struct psx_gpu* gpu);
 void gp0_rect(struct psx_gpu* gpu);
 void gp0_fillvram(struct psx_gpu* gpu);

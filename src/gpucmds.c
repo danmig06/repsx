@@ -10,10 +10,11 @@
 #include <string.h>
 #define GPU_VER 1
 #define SE11(v) ((int16_t)((v) << 5) >> 5)
+#define ABS(n) ((n >= 0) ? (n) : -(n))
 
 #define gpu_render_poly(gpu, sh, ...) gpu->renderer.poly(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
 #define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct psx_render_args){ __VA_ARGS__ })
-#define gpu_render_line(gpu, sh, ...) gpu->renderer.line(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
+#define gpu_render_line(gpu, gouraud,  ...) gpu->renderer.line(&gpu->renderer, gouraud,  &(struct psx_render_args){ __VA_ARGS__ })
 
 typedef union gp0_color {
 	struct __attribute__((packed)) {
@@ -92,12 +93,6 @@ void gp0_poly(struct psx_gpu* gpu) {
 	poly.is_quad = (cmd & BIT(27)) != 0;
 	poly.is_gouraud_shaded = (cmd & BIT(28)) != 0;
 
-	log_trace("GP0 %s %s %s%s %s start", 
-			(poly.is_raw) ? "solid" : "blended",
-			(poly.is_transparent) ? "transparent" : "opaque",
-			(poly.is_textured) ? "textured " : "",
-			(poly.is_gouraud_shaded) ? "gouraud" : "flat",
-			(poly.is_quad) ? "quad" : "triangle");
 	unsigned arg_idx = 1;
 	color_t c[4] = { [0] = { .raw = poly.color0 } };
 	pos_t v[4] = { 0 };
@@ -105,15 +100,12 @@ void gp0_poly(struct psx_gpu* gpu) {
 	pos_t clut = { 0 };
 	texpage_t texpage = { 0 };
 
-	log_trace("color r=%u, g=%u, b=%u", c[0].r, c[0].g, c[0].b);
 	v[0] = make_vert(gpu->cmd.buf[arg_idx++]);
 	v[0].x += gpu->draw_off.x;
 	v[0].y += gpu->draw_off.y;
-	log_trace("vertex x=%hd, y=%hd", v[0].x, v[0].y);
 	if(poly.is_textured) {
 		tex_data[0].raw = gpu->cmd.buf[arg_idx++];
 		clut = make_clut(tex_data[0].info);
-		log_trace("texdata u=%u, v=%u, clut:(x=%u, y=%u)", tex_data[0].u, tex_data[0].v, clut.x, clut.y);
 	}
 
 	int min_x = v[0].x, max_x = v[0].x;
@@ -122,7 +114,6 @@ void gp0_poly(struct psx_gpu* gpu) {
 	for(int i = 1; i < n_vertices; i++) {
 		if(poly.is_gouraud_shaded) {
 			c[i].raw = gpu->cmd.buf[arg_idx++];
-			log_trace("color r=%u, g=%u, b=%u", c[i].r, c[i].g, c[i].b);
 		} else {
 			c[i] = c[0];
 		}
@@ -133,10 +124,8 @@ void gp0_poly(struct psx_gpu* gpu) {
 		v[i].y += gpu->draw_off.y;
 		if(v[i].y > max_y) max_y = v[i].y;
 		if(v[i].y < min_y) min_y = v[i].y;
-		log_trace("vertex x=%hd, y=%hd", v[i].x, v[i].y);
 		if(poly.is_textured) {
 			tex_data[i].raw = gpu->cmd.buf[arg_idx++];
-			log_trace("texdata u=%u, v=%u, info=0x%04x", tex_data[i].u, tex_data[i].v, tex_data[i].info);
 		}
 	}
 	if((max_x - min_x) > 0x3ff || (max_y - min_y) > 0x1ff) {
@@ -180,7 +169,7 @@ void gp0_poly(struct psx_gpu* gpu) {
 			.need_dithering = (shading_mode == PSX_RENDERER_SH_GOURAUD) || !poly.is_raw, .poly.is_quad = poly.is_quad, .transparency_mode = st_mode);
 }
 
-static void gp0_polyline_update(struct psx_gpu* gpu) {
+void gp0_polyline_update(struct psx_gpu* gpu) {
 	struct {
 		uint32_t color0;
 		bool is_transparent;
@@ -191,76 +180,75 @@ static void gp0_polyline_update(struct psx_gpu* gpu) {
 	line.is_transparent = (cmd & BIT(25)) != 0;
 	line.is_gouraud_shaded = (cmd & BIT(28)) != 0;
 
-	color_t c[2];
+	color_t c[2] = { [0] = { .raw = line.color0 } };
 	pos_t v[2];
 	uint32_t* state = &gpu->cmd.buf[GPU_CMD_POLYLINE_STATE];
 	uint32_t word = gpu->cmd.buf[GPU_CMD_DATA_IDX];
 	if((word & 0xf000f000) == 0x50005000) {
-		log_trace("polyline end");
 		gpu->cmd.receiving_data = false;
+		// returning early ends the vertex sequence
 		return;
 	}
 	switch(*state) {
-	case GPU_CMD_POLYLINE_C0:
-		gpu->cmd.buf[GPU_CMD_POLYLINE_C0] = word;
-		*state = GPU_CMD_POLYLINE_V0;
+	// for the first pass, intialize the previous Color/Vertex attributes before parsing the next ones
+	case GPU_CMD_POLYLINE_CPREV:
+		gpu->cmd.buf[GPU_CMD_POLYLINE_CPREV] = word;
+		*state = GPU_CMD_POLYLINE_VPREV;
 		break;
-	case GPU_CMD_POLYLINE_V0:
-		gpu->cmd.buf[GPU_CMD_POLYLINE_V0] = word;
+	case GPU_CMD_POLYLINE_VPREV:
+		gpu->cmd.buf[GPU_CMD_POLYLINE_VPREV] = word;
 		if(line.is_gouraud_shaded) {
-			*state = GPU_CMD_POLYLINE_C1;
+			*state = GPU_CMD_POLYLINE_CCUR;
 		} else {
-			*state = GPU_CMD_POLYLINE_V1;
+			*state = GPU_CMD_POLYLINE_VCUR;
 		}
 		break;
-	case GPU_CMD_POLYLINE_C1:
-		gpu->cmd.buf[GPU_CMD_POLYLINE_C1] = word;
-		*state = GPU_CMD_POLYLINE_V1;
+	case GPU_CMD_POLYLINE_CCUR:
+		gpu->cmd.buf[GPU_CMD_POLYLINE_CCUR] = word;
+		*state = GPU_CMD_POLYLINE_VCUR;
 		break;
-	case GPU_CMD_POLYLINE_V1:
+	case GPU_CMD_POLYLINE_VCUR:
 		if(line.is_gouraud_shaded) {
-			c[0].raw = gpu->cmd.buf[GPU_CMD_POLYLINE_C0];
-			log_trace("color r=%u, g=%u, b=%u", c[0].r, c[0].g, c[0].b);
-			c[1].raw = gpu->cmd.buf[GPU_CMD_POLYLINE_C1];
-			log_trace("color r=%u, g=%u, b=%u", c[1].r, c[1].g, c[1].b);
-			*state = GPU_CMD_POLYLINE_C0;
+			c[0].raw = gpu->cmd.buf[GPU_CMD_POLYLINE_CPREV];
+			c[1].raw = gpu->cmd.buf[GPU_CMD_POLYLINE_CCUR];
+			*state = GPU_CMD_POLYLINE_CCUR;
 		} else {
 			c[0].raw = c[1].raw = line.color0;
-			*state = GPU_CMD_POLYLINE_V0;
+			*state = GPU_CMD_POLYLINE_VCUR;
 		}
-		v[0] = make_vert(gpu->cmd.buf[GPU_CMD_POLYLINE_V0]);
+
+		int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
+		v[0] = make_vert(gpu->cmd.buf[GPU_CMD_POLYLINE_VPREV]);
 		v[0].x += gpu->draw_off.x;
 		v[0].y += gpu->draw_off.y;
-		log_trace("vertex x=%hd, y=%hd", v[0].x, v[0].y);
+		if(word == gpu->cmd.buf[GPU_CMD_POLYLINE_VPREV]) {
+			gpu_render_rect(gpu, false,
+					.rect.v = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
+					.rect.w = 1, .rect.h = 1,
+					.use_mask_bit = (gpu->gpustat & GPUSTAT_USEMSK) != 0,
+					.set_mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) != 0,
+					.transparency_mode = st_mode);
+			break;
+		}
 		v[1] = make_vert(word);
 		v[1].x += gpu->draw_off.x;
 		v[1].y += gpu->draw_off.y;
-		log_trace("vertex x=%hd, y=%hd", v[1].x, v[1].y);
-		int32_t max_x, max_y, min_x, min_y;
-		if(v[0].x > v[1].x) { 
-			max_x = v[0].x;
-			min_x = v[1].x;
+		gpu->cmd.buf[GPU_CMD_POLYLINE_VPREV] = word;
+		gpu->cmd.buf[GPU_CMD_POLYLINE_CPREV] = gpu->cmd.buf[GPU_CMD_POLYLINE_CCUR];
+		int32_t dx = v[1].x - v[0].x;
+		int32_t dy = v[1].y - v[0].y;
+		int32_t adx = ABS(dx);
+		int32_t ady = ABS(dy);
+
+		if(adx > 0x3ff || ady > 0x1ff) {
+			break;
+		} else if(adx > ady) {
+			(dx > 0) ? v[1].x++ : v[0].x++;
 		} else {
-			max_x = v[1].x;
-			min_x = v[0].x;
-		}
-		if(v[0].y > v[1].y) {
-			max_y = v[0].y;
-			min_y = v[1].y;
-		} else {
-			max_y = v[1].y;
-			min_y = v[0].y;
+			(dy > 0) ? v[1].y++ : v[0].y++;
 		}
 
-		if((max_x - min_x) > 0x3ff || (max_y - min_y) > 0x1ff) {
-			break;
-		}
-
-		if(!gpu->renderer.line) {
-			break;
-		}
-		int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
-		gpu_render_line(gpu, (line.is_gouraud_shaded) ? PSX_RENDERER_SH_GOURAUD : PSX_RENDERER_SH_FLAT, 
+		gpu_render_line(gpu, line.is_gouraud_shaded,
 				.line.v0 = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
 				.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw },
 				.use_mask_bit = (gpu->gpustat & GPUSTAT_USEMSK) != 0,
@@ -288,60 +276,38 @@ void gp0_line(struct psx_gpu* gpu) {
 	line.polyline = (cmd & BIT(27)) != 0;
 	line.is_gouraud_shaded = (cmd & BIT(28)) != 0;
 
-	log_trace("GP0 %s%s%sline start", 
-			(line.is_gouraud_shaded) ? "gouraud " : "flat ",
-			(line.is_transparent) ? "transparent " : "opaque ",
-			(line.polyline) ? "poly" : "");
 	unsigned arg_idx = 1;
 	color_t c[2];
 	pos_t v[2];
 
 	c[0].raw = line.color0;
-	log_trace("color r=%u, g=%u, b=%u", c[0].r, c[0].g, c[0].b);
 	v[0] = make_vert(gpu->cmd.buf[arg_idx++]);
 	v[0].x += gpu->draw_off.x;
 	v[0].y += gpu->draw_off.y;
-	log_trace("vertex x=%hd, y=%hd", v[0].x, v[0].y);
 	if(line.is_gouraud_shaded) {
 		c[1].raw = gpu->cmd.buf[arg_idx++];
-		log_trace("color r=%u, g=%u, b=%u", c[1].r, c[1].g, c[1].b);
 	} else {
 		c[1] = c[0];
 	}
 	v[1] = make_vert(gpu->cmd.buf[arg_idx++]);
 	v[1].x += gpu->draw_off.x;
 	v[1].y += gpu->draw_off.y;
-	log_trace("vertex x=%hd, y=%hd", v[1].x, v[1].y);
 
-	if(line.polyline) {
-		gpu->cmd.receiving_data = true;
-		gpu->cmd.words_left = true;
-		gpu->cmd.update = gp0_polyline_update;
-		gpu->cmd.buf[GPU_CMD_POLYLINE_STATE] = (line.is_gouraud_shaded) ? GPU_CMD_POLYLINE_C0 : GPU_CMD_POLYLINE_V0;
-	}
+	int32_t dx = v[1].x - v[0].x;
+	int32_t dy = v[1].y - v[0].y;
+	int32_t adx = ABS(dx);
+	int32_t ady = ABS(dy);
 
-	int32_t max_x, max_y, min_x, min_y;
-	if(v[0].x > v[1].x) { 
-		max_x = v[0].x;
-		min_x = v[1].x;
-	} else {
-		max_x = v[1].x;
-		min_x = v[0].x;
-	}
-	if(v[0].y > v[1].y) {
-		max_y = v[0].y;
-		min_y = v[1].y;
-	} else {
-		max_y = v[1].y;
-		min_y = v[0].y;
-	}
-
-	if((max_x - min_x) > 0x3ff || (max_y - min_y) > 0x1ff) {
+	if(adx > 0x3ff || ady > 0x1ff) {
 		return;
+	} else if(adx > ady) {
+		(dx > 0) ? v[1].x++ : v[0].x++;
+	} else {
+		(dy > 0) ? v[1].y++ : v[0].y++;
 	}
 
 	int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
-	gpu_render_line(gpu, (line.is_gouraud_shaded) ? PSX_RENDERER_SH_GOURAUD : PSX_RENDERER_SH_FLAT, 
+	gpu_render_line(gpu, line.is_gouraud_shaded,
 			.line.v0 = { .x = v[0].x, .y = v[0].y, .color = c[0].raw },
 			.line.v1 = { .x = v[1].x, .y = v[1].y, .color = c[1].raw },
 			.use_mask_bit = (gpu->gpustat & GPUSTAT_USEMSK) != 0,
@@ -364,10 +330,6 @@ void gp0_rect(struct psx_gpu* gpu) {
 	rect.is_textured = (cmd & BIT(26)) != 0;
 	rect.geometry = (cmd >> 27) & 3;
 
-	log_trace("GP0 %s%s%srectangle start", 
-			(rect.is_raw) ? "solid " : "blended ",
-			(rect.is_transparent) ? "transparent " : "opaque ",
-			(rect.is_textured) ? "textured " : " ");
 	unsigned arg_idx = 1;
 	pos_t tl;
 	vec2_t size;
@@ -376,15 +338,12 @@ void gp0_rect(struct psx_gpu* gpu) {
 
 	color_t c;
 	c.raw = rect.color0;
-	log_trace("color r=%u, g=%u, b=%u", c.r, c.g, c.b);
 	tl = make_vert(gpu->cmd.buf[arg_idx++]);
 	tl.x += gpu->draw_off.x;
 	tl.y += gpu->draw_off.y;
-	log_trace("vertex x=%hd, y=%hd", tl.x, tl.y);
 	if(rect.is_textured) {
 		tex_data.raw = gpu->cmd.buf[arg_idx++];
 		clut = make_clut(tex_data.info);
-		log_trace("texdata u=%u, v=%u, clut:(x=%u, y=%u)", tex_data.u, tex_data.v, clut.x, clut.y);
 	}
 	switch(rect.geometry) {
 	case 1:
@@ -401,7 +360,6 @@ void gp0_rect(struct psx_gpu* gpu) {
 		size.raw = gpu->cmd.buf[arg_idx++];
 		break;
 	}
-	log_trace("size w=%hd, h=%hd", size.x, size.y);
 	pos_t texpage_pos;
 	texpage_pos.x = GPUSTAT_TPX_GET(gpu->gpustat) * 64;
 	texpage_pos.y = (gpu->gpustat & GPUSTAT_TPY) ? 256 : 0;
@@ -413,7 +371,7 @@ void gp0_rect(struct psx_gpu* gpu) {
 			.rect.v = { .x = tl.x, .y = tl.y, .color = rect.color0, .tx = tex_data.u, .ty = tex_data.v }, .use_mask_bit = use_mask, .set_mask_bit = set_mask,
 			.rect.w = size.x, .rect.h = size.y, .tex.clut = { clut.x, clut.y }, .tex.offset = { gpu->tex_window.off_x, gpu->tex_window.off_y },
 			.tex.page = { texpage_pos.x, texpage_pos.y }, .tex.depth_mode = GPUSTAT_TPDEPTH_GET(gpu->gpustat), .tex.need_modulation = !rect.is_raw,
-			.tex.mask = { gpu->tex_window.mask_x, gpu->tex_window.mask_y }, .need_dithering = false, .transparency_mode = st_mode);
+			.tex.mask = { gpu->tex_window.mask_x, gpu->tex_window.mask_y }, .transparency_mode = st_mode);
 }
 
 void gp0_fillvram(struct psx_gpu* gpu) {
@@ -425,7 +383,6 @@ void gp0_fillvram(struct psx_gpu* gpu) {
 	size.raw = gpu->cmd.buf[2];
 	size.x = ((size.x & 0x3ff) + 0xf) & 0xfff0;
 	size.y &= 0x1ff;
-	log_trace("GP0 FillVram: x=%u, y=%u, w=%u, h=%u", tl.x, tl.y, size.x, size.y);
 	gpu_render_rect(gpu, false,
 		       .rect.v = { .x = tl.x, .y = tl.y, .color = color0 },
 		       .rect.w = size.x, .rect.h = size.y, .rect.is_clear = true, .use_mask_bit = false,
@@ -433,10 +390,6 @@ void gp0_fillvram(struct psx_gpu* gpu) {
 }
 
 static void gp0_image_load_update(struct psx_gpu* gpu) {
-	if(gpu->cmd.words_left == 0 && ((gpu->blit_state.w * gpu->blit_state.h) & 1)) {
-		gpu->cmd.buf[GPU_CMD_DATA_IDX] &= 0xffff;
-	}
-
 	union {
 		uint16_t colors[2];
 		uint32_t raw;
@@ -501,14 +454,16 @@ void gp0_image_load(struct psx_gpu* gpu) {
 
 	gpu->blit_state.start_x = gpu->blit_state.x;
 	gpu->blit_state.start_y = gpu->blit_state.y;
-	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h, false);
+	psx_gpu_rect_t req_rect = {
+		gpu->blit_state.x, gpu->blit_state.y,
+		gpu->blit_state.w, gpu->blit_state.h
+	};
+	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, &req_rect, false);
 
 	gpu->cmd.receiving_data = true;
 	gpu->cmd.words_left = (gpu->blit_state.w * gpu->blit_state.h) + 1;
 	gpu->cmd.words_left >>= 1;
 	gpu->cmd.update = gp0_image_load_update;
-	log_trace("GP0 image load at x=%hu y=%hu w=%hu h=%hu (%u words)", 
-			gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h, gpu->cmd.words_left);
 }
 
 void gp0_image_store(struct psx_gpu* gpu) {
@@ -517,30 +472,34 @@ void gp0_image_store(struct psx_gpu* gpu) {
 	gpu->blit_state.y = gpu->cmd.buf[1] >> 16;
 	gpu->blit_state.w = gpu->cmd.buf[2] & 0xffff;
 	gpu->blit_state.h = gpu->cmd.buf[2] >> 16;
+
 	gpu->blit_state.start_x = gpu->blit_state.x;
 	gpu->blit_state.start_y = gpu->blit_state.y;
 	gpu->blit_state.is_read = true;
-	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h, true);
+	psx_gpu_rect_t req_rect = {
+		gpu->blit_state.x, gpu->blit_state.y,
+		gpu->blit_state.w, gpu->blit_state.h
+	};
+	gpu->blit_state.texels = gpu->renderer.get_vram(&gpu->renderer, &req_rect, true);
 
 	gpu->gpustat |= GPUSTAT_VRAM_READY;
-
-	log_trace("GP0 image store at x=%hu y=%hu w=%hu h=%hu (%u words)", 
-			gpu->blit_state.x, gpu->blit_state.y, gpu->blit_state.w, gpu->blit_state.h, ((gpu->blit_state.w * gpu->blit_state.h) + 1) >> 1);
 }
 
 void gp0_blit(struct psx_gpu* gpu) {
 	// command word has no information
-	vec2_t src, dst;
+	psx_gpu_vec2_t src = {
+		.x = gpu->cmd.buf[1] & 0xffff,
+		.y = gpu->cmd.buf[1] >> 16
+	};
+	psx_gpu_vec2_t dst = {
+		.x = gpu->cmd.buf[2] & 0xffff,
+		.y = gpu->cmd.buf[2] >> 16
+	};
 	int w, h;
-	src.raw = gpu->cmd.buf[1];
-	dst.raw = gpu->cmd.buf[2];
 	w = gpu->cmd.buf[3] & 0xffff;
 	h = gpu->cmd.buf[3] >> 16;
 
-	log_trace("GP0 blit at sx=%hu sy=%hu -> dx=%hu, dy=%hu w=%d h=%d", 
-			src.x, src.y, dst.x, dst.y, w, h);
-
-	gpu->renderer.blit(&gpu->renderer, src.x, src.y, dst.x, dst.y, w, h);
+	gpu->renderer.blit(&gpu->renderer, src, dst, w, h);
 }
 
 void gp0_draw_mode(struct psx_gpu* gpu) {
@@ -577,14 +536,18 @@ void gp0_draw_area_tl(struct psx_gpu* gpu) {
 	uint32_t cmd = gpu->cmd.buf[GPU_CMD_IDX];
 	gpu->draw_area.x1 = cmd & 0x3ff; // 10 bits
 	gpu->draw_area.y1 = (cmd >> 10) & 0x3ff; // 10 bits
-	gpu->renderer.clip_update(&gpu->renderer, gpu->draw_area.x1, gpu->draw_area.y1, gpu->draw_area.x2, gpu->draw_area.y2);
+	psx_gpu_vec2_t tl = { gpu->draw_area.x1, gpu->draw_area.y1 };
+	psx_gpu_vec2_t br = { gpu->draw_area.x2, gpu->draw_area.y2 };
+	gpu->renderer.clip_update(&gpu->renderer, tl, br);
 }
 
 void gp0_draw_area_br(struct psx_gpu* gpu) {
 	uint32_t cmd = gpu->cmd.buf[GPU_CMD_IDX];
 	gpu->draw_area.x2 = cmd & 0x3ff; // 10 bits
 	gpu->draw_area.y2 = (cmd >> 10) & 0x3ff; // 10 bits
-	gpu->renderer.clip_update(&gpu->renderer, gpu->draw_area.x1, gpu->draw_area.y1, gpu->draw_area.x2, gpu->draw_area.y2);
+	psx_gpu_vec2_t tl = { gpu->draw_area.x1, gpu->draw_area.y1 };
+	psx_gpu_vec2_t br = { gpu->draw_area.x2, gpu->draw_area.y2 };
+	gpu->renderer.clip_update(&gpu->renderer, tl, br);
 }
 
 void gp0_set_draw_offset(struct psx_gpu* gpu) {

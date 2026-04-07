@@ -28,10 +28,10 @@ struct psx_spu {
 		uint32_t koff;
 		uint32_t pmon;
 		uint32_t noise_en;
-		uint32_t echo_on;
+		uint32_t eon;
 		uint32_t endx;
 		uint16_t unk_da0;
-		uint16_t revb_base;
+		uint16_t mbase;
 		uint16_t irq_addr;
 		uint16_t trn_addr;
 		uint16_t trn_fifo;
@@ -105,6 +105,15 @@ struct psx_spu {
 		uint16_t buf[32];
 		int idx;
 	} tfifo;
+	struct {
+		int32_t in_l[39];
+		int32_t in_r[39];
+		int16_t out_l[39];
+		int16_t out_r[39];
+		uint8_t off;
+	} fir_buf;
+	bool revb_signal;
+	uint32_t revb_addr;
 	struct {
 		uint32_t write_off;
 		uint32_t read_off;

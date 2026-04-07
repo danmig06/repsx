@@ -89,7 +89,13 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	int overscan = OVERSCAN_SIZE << h_shift;
 	int w = (((gpu->display_area.x2 - gpu->display_area.x1) / dotclock_div) + 2) & (~3);
 	int h = (gpu->display_area.y2 - gpu->display_area.y1) << h_shift;
-	gpu->renderer.update(&gpu->renderer, gpu->display_area.x, gpu->display_area.y + overscan, w, h - (overscan * 2), (gpu->gpustat & GPUSTAT_RGB24EN));
+	psx_gpu_rect_t dpy_area = {
+		gpu->display_area.x,
+		gpu->display_area.y + overscan,
+		w,
+		h - (overscan * 2)
+	};
+	gpu->renderer.update(&gpu->renderer, &dpy_area, (gpu->gpustat & GPUSTAT_RGB24EN) != 0, !(gpu->gpustat & GPUSTAT_DPY_DISABLE));
 	psx_sched_remove_ev(sched, self->id);
 	psx_sched_add_ev(sched, &vblank_event);
 }
@@ -132,9 +138,17 @@ static void gpu_do_gp0(struct psx_gpu* gpu, uint32_t cmd) {
 				break;
 			}
 			case 2: {
-				// 2 vertices + 1 color if gouraud shaded
-				gpu->cmd.words_left = 2 + (is_gouraud_shaded);
-				gpu->cmd.execute = gp0_line;
+				if(cmd_num & BIT(3)) {
+					gpu->cmd.receiving_data = true;
+					gpu->cmd.words_left = true;
+					gpu->cmd.update = gp0_polyline_update;
+					gpu->cmd.buf[GPU_CMD_IDX] = cmd;
+					gpu->cmd.buf[GPU_CMD_POLYLINE_STATE] = GPU_CMD_POLYLINE_CPREV;
+				} else {
+					// 2 vertices + 1 color if gouraud shaded
+					gpu->cmd.words_left = 2 + (is_gouraud_shaded);
+					gpu->cmd.execute = gp0_line;
+				}
 				break;
 			}
 			case 3: {
