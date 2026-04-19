@@ -2,6 +2,8 @@
 #include <psx/irq.h>
 #include <psx/mdec.h>
 #include <psx/spu.h>
+#include <psx/gpu.h>
+#include <psx/cdrom.h>
 #include <psx/sched.h>
 
 #include <string.h>
@@ -15,8 +17,8 @@
 #define DMACHN_ENABLED(dmac, id) ((DICR_CHNMASK_GET(dmac->regs.dicr) >> (id)) & 1)
 #define DICR_WRITE_MASK 0x00ff807f
 
-#define TO_FP8(n) (uint32_t)((n) * 256.0f)
-#define FROM_FP8(n) ((n) >> 8)
+#define READ_WORD(m, a) (*(uint32_t*)&((m)[(a)]))
+#define WRITE_WORD(m, a, v) *(uint32_t*)&((m)[(a)]) = (v);
 
 #define LL_HEADER_SETUP_DELAY 8
 #define LL_PACKET_SETUP_DELAY 5
@@ -83,8 +85,6 @@ static void dma_complete_evcb(struct psx_sched* sched, struct psx_sev* self) {
 }
 
 #endif
-
-void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel);
 
 void psx_dmac_init(struct psx_dmac* dmac) {
 	memset(dmac, 0, sizeof(*dmac));
@@ -190,7 +190,7 @@ void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	}
 }
 
-uint32_t transfer_size(psx_dma_channel_t chn) {
+static uint32_t transfer_size(psx_dma_channel_t chn) {
 	switch(CHCR_MODE_GET(chn.ctrl)) {
 	case PSX_DMA_MODE_MANUAL:
 		if(chn.bc.n_words == 0) {
@@ -204,30 +204,25 @@ uint32_t transfer_size(psx_dma_channel_t chn) {
 	}
 }
 
-bool is_triggered(psx_dma_channel_t* chn) {
+static bool is_triggered(psx_dma_channel_t* chn) {
 	if(CHCR_MODE_GET(chn->ctrl) == PSX_DMA_MODE_MANUAL) {
 		return (chn->ctrl & CHCR_START) && (chn->ctrl & CHCR_FORCE);
 	}
 	return (chn->ctrl & CHCR_START) != 0;
 }
 
-uint32_t fetch_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum dmachnidx_t channel) {
-	uint32_t word = 0;
+static uint32_t fetch_word_dev(struct psx_system* sys, struct copyvec* copy_state, enum dmachnidx_t channel) {
 	switch(channel) {
 	case DMACHN_MDECIN:
 		break;
 	case DMACHN_MDECOUT:
-		return psx_mdec_direct_out(dmac->sys->mdec);
+		return psx_mdec_direct_out(sys->mdec);
 	case DMACHN_GPU:
-		return psx_mem_read32(dmac->sys->memory, 0x1f801810);
+		return psx_gpu_direct_out(sys->gpu);
 	case DMACHN_CDROM:
-		word = psx_mem_read8(dmac->sys->memory, 0x1f801802);
-		word |= psx_mem_read8(dmac->sys->memory, 0x1f801802) << 8;
-		word |= psx_mem_read8(dmac->sys->memory, 0x1f801802) << 16;
-		word |= psx_mem_read8(dmac->sys->memory, 0x1f801802) << 24;
-		return word;
+		return psx_cdr_direct_out(sys->cdrom);
 	case DMACHN_SPU:
-		return psx_spu_direct_out(dmac->sys->spu);
+		return psx_spu_direct_out(sys->spu);
 	case DMACHN_PIO:
 		break;
 	case DMACHN_OTC:
@@ -244,20 +239,20 @@ uint32_t fetch_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum 
 	return 0;
 }
 
-void write_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum dmachnidx_t channel, uint32_t data) {
+static void write_word_dev(struct psx_system* sys, enum dmachnidx_t channel, uint32_t data) {
 	switch(channel) {
 	case DMACHN_MDECIN:
-		psx_mdec_direct_in(dmac->sys->mdec, data);
+		psx_mdec_direct_in(sys->mdec, data);
 		break;
 	case DMACHN_MDECOUT:
 		break;
 	case DMACHN_GPU:
-		psx_mem_write32(dmac->sys->memory, 0x1f801810, data);
+		psx_gpu_direct_in(sys->gpu, data);
 		break;
 	case DMACHN_CDROM:
 		break;
 	case DMACHN_SPU:
-		psx_spu_direct_in(dmac->sys->spu, data);
+		psx_spu_direct_in(sys->spu, data);
 		break;
 	case DMACHN_PIO:
 		break;
@@ -269,7 +264,7 @@ void write_word_dev(struct psx_dmac* dmac, struct copyvec* copy_state, enum dmac
 	}
 }
 
-void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
+static void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
 
 	uint32_t start_addr = chn->start_addr & 0x1ffffc;
@@ -280,18 +275,19 @@ void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	copy_state.increment = (chn->ctrl & CHCR_INC) ? -4 : 4;
 
 	uint32_t src;
+	const uint8_t* mem = dmac->sys->memory->phys;
 	if((chn->ctrl & CHCR_DIR) == PSX_DMA_DIR_TO_RAM) {
 		while(copy_state.words_left > 0) {
-			src = fetch_word_dev(dmac, &copy_state, channel);
-			psx_mem_write32(dmac->sys->memory, copy_state.addr, src);
+			src = fetch_word_dev(dmac->sys, &copy_state, channel);
+			WRITE_WORD(mem, copy_state.addr, src);
 
 			copy_state.addr = (copy_state.addr + copy_state.increment) & 0x1fffff;
 			copy_state.words_left--;
 		}
 	} else {
 		while(copy_state.words_left > 0) {
-			src = psx_mem_read32(dmac->sys->memory, copy_state.addr);
-			write_word_dev(dmac, &copy_state, channel, src);
+			src = READ_WORD(mem, copy_state.addr);
+			write_word_dev(dmac->sys, channel, src);
 
 			copy_state.addr = (copy_state.addr + copy_state.increment) & 0x1fffff;
 			copy_state.words_left--;
@@ -303,29 +299,23 @@ void do_dev_blkcopy(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	}
 }
 
-void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel, uint32_t* current_delay) {
-	if(channel != DMACHN_GPU) {
-		panic("linked list mode is not implemented for devices other than GPU");
-	}
-
+static void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel, uint32_t* current_delay) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
-	if((chn->ctrl & CHCR_DIR) != PSX_DMA_DIR_FROM_RAM) {
-		panic("invalid linked list transfer");
-	}
 
 	if(chn->start_addr & 0x800000) {
 		log_warn("DMA: GPU received empty linked list");
 		return;
 	}
 
-	uint32_t addr = chn->start_addr & 0xfffffc;
+	const uint8_t* mem = dmac->sys->memory->phys;
+	struct psx_gpu* gpu = dmac->sys->gpu;
+	uint32_t addr = chn->start_addr & 0x1ffffc;
 	uint32_t list_header;
-	uint32_t item;
 	uint8_t items_left;
 	uint32_t limit = 65536;
 
 	while(limit--) {
-		list_header = psx_mem_read32(dmac->sys->memory, addr);
+		list_header = READ_WORD(mem, addr);
 
 		items_left = list_header >> 24;
 		*current_delay += (items_left + ((items_left + 15) / 16)) + LL_HEADER_SETUP_DELAY;
@@ -334,9 +324,8 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel, uint32_
 		}
 
 		while(items_left > 0) {
-			addr = (addr + 4) & 0xfffffc;
-			item = psx_mem_read32(dmac->sys->memory, addr);
-			psx_mem_write32(dmac->sys->memory, 0x1f801810, item);
+			addr = (addr + 4) & 0x1ffffc;
+			psx_gpu_direct_in(gpu, READ_WORD(mem, addr));
 			items_left--;
 		}
 
@@ -345,11 +334,11 @@ void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel, uint32_
 			break;
 		}
 
-		addr = list_header & 0xfffffc;
+		addr = list_header & 0x1ffffc;
 	}
 }
 
-void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
+static void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	psx_dma_channel_t* chn = &dmac->regs.chn[channel];
 	if(channel == DMACHN_OTC) {
 		// OTC is hardwired differently, it needs special handling
@@ -430,7 +419,6 @@ void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 	}
 #else
 	delay += word_count + ((word_count + 15) / 16);
-	// will fix Valkyrie Profile
 	dma_comp_ev[channel].eta = delay;
 	dmac->chnstate[channel].busy = true;
 	psx_sched_add_ev(dmac->sys->sched, &dma_comp_ev[channel]);

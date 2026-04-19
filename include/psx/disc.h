@@ -4,7 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+
 #define PSX_DISC_SECTOR_SIZE 2352
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 enum {
 	PSX_DT_INVALID,
@@ -36,5 +41,9 @@ struct psx_disc {
 };
 
 void psx_disc_verify(struct psx_disc* disc);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_DISC_H

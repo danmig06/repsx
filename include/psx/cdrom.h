@@ -11,6 +11,10 @@
 #define PSX_CDROM_RESPBUF_SIZE 16
 #define PSX_CDROM_PARMBUF_SIZE 16
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct psx_cdrom {
 	struct {
 		uint8_t ctrl;
@@ -27,6 +31,7 @@ struct psx_cdrom {
 	uint8_t vol_ll, vol_lr, vol_rr, vol_rl;
 	uint8_t state;
 	uint8_t disc_mode;
+	bool shell_open;
 	struct queue* data_queue;
 	struct queue* resp_queue;
 	struct queue* param_queue;
@@ -66,9 +71,15 @@ typedef struct {
 void psx_cdr_init(struct psx_cdrom* cdr);
 void psx_cdr_reset(struct psx_cdrom* cdr);
 psx_cdr_sample_t psx_cdr_pop_sample(struct psx_cdrom* cdr);
+void psx_cdr_tray_open(struct psx_cdrom* cdr);
 
+uint32_t psx_cdr_direct_out(struct psx_cdrom* cdr);
 uint16_t psx_cdr_read16(struct psx_region* reg, uint32_t addr);
 uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr);
 void psx_cdr_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif

@@ -362,7 +362,7 @@ static void spu_revb_write(struct psx_spu* spu, spu_addr_t addr, int16_t val) {
 #define R(a) spu_revb_read(spu, a)
 #define W(a, v) spu_revb_write(spu, a, v)
 
-static sample_t spu_process_reverb(struct psx_spu* spu) {
+static void spu_process_reverb(struct psx_spu* spu, int32_t* left_out, int32_t* right_out) {
 	int32_t lv_in = 0, rv_in = 0;
 	// downsample the input
 	int read_off = spu->fir_buf.off;
@@ -445,12 +445,12 @@ static sample_t spu_process_reverb(struct psx_spu* spu) {
 
 	spu->fir_buf.out_l[spu->fir_buf.off] = Lout;
 	spu->fir_buf.out_r[spu->fir_buf.off] = Rout;
-	int32_t l_out = 0, r_out = 0;
+	int32_t ul_out = 0, ur_out = 0;
 	// upsample the output
 	read_off = spu->fir_buf.off;
 	for(int i = 0; i < 39; i++) {
-		l_out += (spu->fir_buf.out_l[read_off] * g_fir_filter[i]) >> 15;
-		r_out += (spu->fir_buf.out_r[read_off] * g_fir_filter[i]) >> 15;
+		ul_out += (spu->fir_buf.out_l[read_off] * g_fir_filter[i]) >> 15;
+		ur_out += (spu->fir_buf.out_r[read_off] * g_fir_filter[i]) >> 15;
 		if(read_off == 0) {
 			read_off = 38;
 		} else {
@@ -458,10 +458,8 @@ static sample_t spu_process_reverb(struct psx_spu* spu) {
 		}
 	}
 
-	return (sample_t) {
-		.l = vmult(l_out, spu->regs.revb_lvolume),
-		.r = vmult(r_out, spu->regs.revb_rvolume)
-	};
+	*left_out = (ul_out * spu->regs.revb_lvolume) >> 15;
+	*right_out = (ur_out * spu->regs.revb_rvolume) >> 15;
 }
 
 static sample_t spu_process_voice(struct psx_spu* spu, int n) {
@@ -620,7 +618,7 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 		psx_cdr_sample_t cd = psx_cdr_pop_sample(spu->sys->cdrom);
 		*cd_left_cap  = cd.l;
 		*cd_right_cap = cd.r;
-		cd.l = vmult(cd.l, (cd_vol << 16) >> 16);
+		cd.l = vmult(cd.l, cd_vol & 0xffff);
 		cd.r = vmult(cd.r, cd_vol >> 16);
 		left  += cd.l;
 		right += cd.r;
@@ -636,9 +634,10 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 		spu->fir_buf.in_l[spu->fir_buf.off] = revbl;
 	} else {
 		spu->fir_buf.in_r[spu->fir_buf.off] = revbr;
-		sample_t revb_out = spu_process_reverb(spu);
-		left  += revb_out.l;
-		right += revb_out.r;
+		int32_t revb_outl, revb_outr;
+		spu_process_reverb(spu, &revb_outl, &revb_outr);
+		left  += revb_outl;
+		right += revb_outr;
 
 		spu->fir_buf.off++;
 		if(spu->fir_buf.off == 39) {
@@ -663,7 +662,10 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 	uint32_t available = psx_spu_available_samples(spu);
 	if(available >= spu->out.capacity) {
 		// log_error("SPU: buffer overflow");
-		spu->out.read_off = (spu->out.read_off + 2) % PSX_SPU_OUTBUF_SIZE;
+		spu->out.read_off += 2;
+		if(spu->out.read_off >= spu->out.capacity) {
+			spu->out.read_off -= spu->out.capacity;
+		}
 	}
 	
 	psx_sched_remove_ev(sched, self->id);

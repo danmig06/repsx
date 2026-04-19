@@ -7,29 +7,24 @@
 #include <stdint.h>
 #include <string.h>
 
-void psx_bios_load(struct psx_bios* bios, const char* path, bool cache_to_mem) {
-	bios->stream = fopen(path, "rb");
-	if(!bios->stream) {
+void psx_bios_load(struct psx_bios* bios, const char* path) {
+	FILE* stream = fopen(path, "rb");
+	if(!stream) {
 		panic("failed to load BIOS file at '%s'", path);	
 	}
 
-	fseek(bios->stream, 0, SEEK_END);
+	fseek(stream, 0, SEEK_END);
 
-	uint64_t file_size = ftell(bios->stream);
-	rewind(bios->stream);
+	size_t file_size = ftell(stream);
+	rewind(stream);
 
 	if(file_size != PSX_BIOS_SIZE) {
 		panic("invalid BIOS size");
 	}
 
-	if(cache_to_mem) {
-		bios->cache = malloc(PSX_BIOS_SIZE);
-		fread(bios->cache, PSX_BIOS_SIZE, 1, bios->stream);
-		fclose(bios->stream);
-		bios->stream = NULL;
-	} else {
-		bios->cache = NULL;
-	}
+	bios->rom = malloc(PSX_BIOS_SIZE);
+	fread(bios->rom, PSX_BIOS_SIZE, 1, stream);
+	fclose(stream);
 }
 
 uint32_t psx_bios_read32(struct psx_region* reg, uint32_t addr) {
@@ -40,13 +35,7 @@ uint32_t psx_bios_read32(struct psx_region* reg, uint32_t addr) {
 	struct psx_bios* bios = reg->peripheral;
 	uint32_t val = 0;
 	uint32_t image_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
-	if(bios->cache != NULL) {
-		memcpy(&val, &bios->cache[image_offset], sizeof(val));
-		return val;
-	}
-
-	fseek(bios->stream, image_offset, SEEK_SET);
-	fread(&val, sizeof(val), 1, bios->stream);
+	memcpy(&val, &bios->rom[image_offset], sizeof(val));
 	return val;
 }
 
@@ -58,13 +47,7 @@ uint16_t psx_bios_read16(struct psx_region* reg, uint32_t addr) {
 	struct psx_bios* bios = reg->peripheral;
 	uint16_t val = 0;
 	uint32_t image_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
-	if(bios->cache != NULL) {
-		memcpy(&val, &bios->cache[image_offset], sizeof(val));
-		return val;
-	}
-
-	fseek(bios->stream, image_offset, SEEK_SET);
-	fread(&val, sizeof(val), 1, bios->stream);
+	memcpy(&val, &bios->rom[image_offset], sizeof(val));
 	return val;
 }
 
@@ -76,13 +59,8 @@ uint8_t psx_bios_read8(struct psx_region* reg, uint32_t addr) {
 	struct psx_bios* bios = reg->peripheral;
 	uint8_t val = 0;
 	uint32_t image_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
-	if(bios->cache != NULL) {
-		val = bios->cache[image_offset];
-		return val;
-	}
-
-	fseek(bios->stream, image_offset, SEEK_SET);
-	return fgetc(bios->stream);
+	val = bios->rom[image_offset];
+	return val;
 }
 
 void psx_bios_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {

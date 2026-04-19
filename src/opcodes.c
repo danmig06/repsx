@@ -24,14 +24,45 @@
 
 bool do_disasm = false;
 
-#define REG(idx) psx_cpu_get_reg(cpu, idx)
-#define SET_REG(idx, val) psx_cpu_set_reg(cpu, idx, val)
+static const uint32_t cop0_reg_write_mask_table[] = {
+	0x00000000, // r0
+	0x00000000, // r1
+	0x00000000, // r2
+	0xffffffff, // BPC
+	0x00000000, // r4
+	0xffffffff, // BDA
+	0x00000000, // JUMPDEST
+	0xffc0f03f, // DCIC
+	0x00000000, // BadVaddr
+	0xffffffff, // BDAM
+	0x00000000, // r10
+	0xffffffff, // BPCM
+	0xffffffff, // SR
+	0x00000300, // CAUSE
+	0x00000000, // EPC
+	0x00000000  // PRID
+};
+
+static inline void cpu_set_reg(struct psx_cpu* cpu, unsigned index, uint32_t val) {
+	if(index == 0) {
+		return;
+	}
+
+	if(cpu->load_slot.target == index) {
+		cpu->load_slot.target = 0;
+	}
+
+	cpu->regs.r[index] = val;
+}
+
+#define REG(idx) cpu->regs.r[idx]
+#define SET_REG(idx, val) cpu_set_reg(cpu, idx, val)
 
 #define COP_REG(idx) get_cop_register(cpu, insn, idx)
-uint32_t get_cop_register(struct psx_cpu* cpu, uint32_t insn, uint32_t idx) {
+static uint32_t get_cop_register(struct psx_cpu* cpu, uint32_t insn, uint32_t idx) {
 	switch(COP_NUM(insn)) {
 	case 0:
-		return psx_cpu_get_cop0_reg(cpu, idx);
+		return cpu->cop0_regs.r[idx];
 	case 2:
 		return gte_read_register(cpu, idx);
 	default:
@@ -41,16 +72,16 @@ uint32_t get_cop_register(struct psx_cpu* cpu, uint32_t insn, uint32_t idx) {
 }
 
 #define SET_COP_REG(idx, val) set_cop_register(cpu, insn, idx, val)
-void set_cop_register(struct psx_cpu* cpu, uint32_t insn, uint32_t idx, uint32_t val) { 
+static void set_cop_register(struct psx_cpu* cpu, uint32_t insn, uint32_t idx, uint32_t val) {
 	switch(COP_NUM(insn)) { 
 	case 0: 
-		psx_cpu_set_cop0_reg(cpu, idx, val);
+		cpu->cop0_regs.r[idx] = (cpu->cop0_regs.r[idx] & ~cop0_reg_write_mask_table[idx]) | (val & cop0_reg_write_mask_table[idx]);
 		break;
 	case 2:
 		gte_write_register(cpu, idx, val);
 		break;
 	default:
-		panic("invalid coprocessor target");
+		panic("0x%08x: invalid coprocessor target", cpu->regs.pc);
 		break;
 	}
 }

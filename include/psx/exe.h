@@ -9,6 +9,10 @@
 
 #define PSX_EXE_PROG_START_OFF 0x800
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct psx_exe_header {
 	char ident[16];
 	uint32_t initial_pc;
@@ -32,6 +36,10 @@ struct psx_exe {
 bool psx_exe_open(struct psx_exe* exe, const char* filename);
 void psx_exe_load(struct psx_exe* exe, struct psx_system* sys);
 void psx_exe_close(struct psx_exe* exe);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_EXE_H
 

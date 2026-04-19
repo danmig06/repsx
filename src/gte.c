@@ -37,9 +37,9 @@
 #define LZCR cpu->gte_regs.lzcr
 
 #define RT(i, j) cpu->gte_regs.rt.elements[(3 * (i - 1)) + (j - 1)]
-#define TRX cpu->gte_regs.trx
-#define TRY cpu->gte_regs.try
-#define TRZ cpu->gte_regs.trz
+#define TRX cpu->gte_regs.tr_x
+#define TRY cpu->gte_regs.tr_y
+#define TRZ cpu->gte_regs.tr_z
 
 #define L(i, j) cpu->gte_regs.l.elements[(3 * (i - 1)) + (j - 1)]
 #define RBK cpu->gte_regs.rbk

@@ -27,6 +27,10 @@
 #define PSX_GPU_VISIBLE_SCANS_PAL 288
 #define PSX_GPU_TOTAL_SCANS_PAL 314
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
 	PSX_GPU_TEXDEPTH_4BIT = 0,
 	PSX_GPU_TEXDEPTH_8BIT = 1,
@@ -98,10 +102,8 @@ typedef struct psx_render_args {
 	bool need_dithering;
 	int transparency_mode;
 	struct {
-		psx_gpu_vec2_t page;
-		psx_gpu_vec2_t clut;
-		psx_gpu_vec2_t offset;
-		psx_gpu_vec2_t mask;
+		psx_gpu_vec2_t page, clut;
+		psx_gpu_vec2_t mask, offset;
 		int depth_mode;
 		bool need_modulation;
 	} tex;
@@ -140,10 +142,7 @@ struct psx_gpu {
 		bool receiving_data;
 	} cmd;
 	struct {
-		uint16_t x1;
-		uint16_t y1;
-		uint16_t x2;
-		uint16_t y2;
+		psx_gpu_vec2_t start, end;
 	} draw_area;
 	struct {
 		uint16_t x;
@@ -154,25 +153,18 @@ struct psx_gpu {
 		uint16_t y2;
 	} display_area;
 	struct {
-		int16_t x;
-		int16_t y;
+		int16_t x, y;
 	} draw_off;
 	struct {
-		uint16_t mask_x;
-		uint16_t mask_y;
-		uint16_t off_x;
-		uint16_t off_y;
+		psx_gpu_vec2_t mask, off;
 	} tex_window;
 	struct {
-		uint16_t start_x;
-		uint16_t start_y;
-		uint16_t x;
-		uint16_t y;
-		uint16_t w;
-		uint16_t h;
+		uint16_t cx;
+		uint16_t cy;
+		psx_gpu_rect_t box;
 		bool is_read;
 		uint16_t* texels;
-	} blit_state;
+	} blit;
 	int scanline_count;
 	struct psx_renderer renderer;
 	struct psx_system* sys;
@@ -180,6 +172,8 @@ struct psx_gpu {
 
 void psx_gpu_init(struct psx_gpu* gpu);
 void psx_gpu_reset(struct psx_gpu* gpu);
+uint32_t psx_gpu_direct_out(struct psx_gpu* gpu);
+void psx_gpu_direct_in(struct psx_gpu* gpu, uint32_t word);
 
 uint32_t psx_gpu_read32(struct psx_region* reg, uint32_t addr);
 void psx_gpu_write32(struct psx_region* reg, uint32_t addr, uint32_t val);
@@ -187,6 +181,10 @@ uint16_t psx_gpu_read16(struct psx_region* reg, uint32_t addr);
 void psx_gpu_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_gpu_read8(struct psx_region* reg, uint32_t addr);
 void psx_gpu_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_GPU_H
 

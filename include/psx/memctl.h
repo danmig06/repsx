@@ -7,6 +7,10 @@
 #define PSX_MEMCTRL2_ADDR 0x1f801060
 #define PSX_MEMCTRL3_ADDR 0xfffe0130
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct psx_memctl {
 	struct {
 		uint32_t exp1_base;
@@ -35,6 +39,10 @@ uint16_t psx_memctl_read16(struct psx_region* reg, uint32_t addr);
 void psx_memctl_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_memctl_read8(struct psx_region* reg, uint32_t addr);
 void psx_memctl_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_MEMCTL_H
 

@@ -13,6 +13,10 @@
 #define PSX_CPU_FREQ 33.868800f
 #define PSX_CPU_CPI 2
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct __psx_regstate {
 	union {
 		struct {
@@ -65,7 +69,7 @@ typedef union __psx_cop0_regstate {
 		uint32_t epc;
 		uint32_t prid;
 	};
-	uint32_t r[64];
+	uint32_t r[16];
 } psx_cop0_regstate_t;
 
 typedef struct {
@@ -79,24 +83,20 @@ typedef struct {
 	int32_t z;
 } psx_gte_vec3_t;
 
-typedef struct {
-	union {
-		struct {
-			int16_t x, y;
-		};
-		uint32_t xy;
+typedef union {
+	struct {
+		int16_t x, y;
 	};
+	uint32_t xy;
 } psx_gte_vec2_t;
 
-typedef struct {
-	union {
-		uint32_t rgb;
-		struct {
-			uint8_t r;
-			uint8_t g;
-			uint8_t b;
-			uint8_t c;
-		};
+typedef union {
+	uint32_t rgb;
+	struct {
+		uint8_t r;
+		uint8_t g;
+		uint8_t b;
+		uint8_t c;
 	};
 } psx_gte_color_t;
 
@@ -128,7 +128,7 @@ typedef union __psx_gte_regstate {
 		
 		// control registers
 		psx_gte_mat_t rt;           // r32~36 rotation matrix
-		int32_t trx, try, trz;      // r37~39 translation vector
+		int32_t tr_x, tr_y, tr_z;   // r37~39 translation vector
 		psx_gte_mat_t l;            // r40~44 light matrix
 		uint32_t rbk, gbk, bbk;     // r45~47 background color
 		psx_gte_mat_t ls;           // r48~52 light source matrix
@@ -173,11 +173,11 @@ void psx_cpu_init(struct psx_cpu* cpu);
 void psx_cpu_reset(struct psx_cpu* cpu);
 void psx_cpu_register_irq(struct psx_cpu* cpu);
 void psx_cpu_clear_irq(struct psx_cpu* cpu);
-uint32_t psx_cpu_get_reg(struct psx_cpu* cpu, unsigned index);
-void psx_cpu_set_reg(struct psx_cpu* cpu, unsigned index, uint32_t val);
-uint32_t psx_cpu_get_cop0_reg(struct psx_cpu* cpu, unsigned index);
-void psx_cpu_set_cop0_reg(struct psx_cpu* cpu, unsigned index, uint32_t val);
 void psx_cpu_fetch_execute(struct psx_cpu* cpu);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_CPU_H
 

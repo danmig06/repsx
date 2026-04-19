@@ -17,6 +17,7 @@ void psx_cdr_init(struct psx_cdrom* cdr) {
 
 void psx_cdr_reset(struct psx_cdrom* cdr) {
 	memset(&cdr->regs, 0, sizeof(cdr->regs));
+	cdr->disc = NULL;
 	cdr->data_queue  = queue_create(PSX_CDROM_DATABUF_SIZE);
 	cdr->resp_queue  = queue_create(PSX_CDROM_RESPBUF_SIZE);
 	cdr->param_queue = queue_create(PSX_CDROM_PARMBUF_SIZE);
@@ -63,11 +64,11 @@ void cdr_bank0_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		cdr_run_cmd(cdr);
 		break;
 	case 2:
-		log_debug("CDROM: push parameter (0x%02x)", val);
+		log_debug("CDROM: push parameter (%02x)", val);
 		cdr_push_param(cdr, val);
 		break;
 	case 3:
-		// log_trace("CDROM: HCHPCTL write (0x%02x)", val);
+		// log_trace("CDROM: HCHPCTL write (%02x)", val);
 		cdr->regs.hchp_ctrl = val;
 		break;
 	default:
@@ -81,11 +82,11 @@ void cdr_bank1_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		cdr->regs.wr_data = val;
 		break;
 	case 2:
-		// log_debug("CDROM: IRQ mask set (0x%02x)", val);
+		// log_debug("CDROM: IRQ mask set (%02x)", val);
 		cdr->regs.irq_mask = val;
 		break;
 	case 3:
-		// log_debug("CDROM: IRQ acknowledged (0x%02x)", val);
+		// log_debug("CDROM: IRQ acknowledged (%02x)", val);
 		cdr->regs.irq_status &= ~(val & (INT_FLAGS | INT_BFEMPT | INT_BFWRDY));
 		break;
 	default:
@@ -155,6 +156,16 @@ psx_cdr_sample_t psx_cdr_pop_sample(struct psx_cdrom* cdr) {
 	}
 
 	return s;
+}
+
+uint32_t psx_cdr_direct_out(struct psx_cdrom* cdr) {
+	uint32_t word = queue_pop(cdr->data_queue) | (queue_pop(cdr->data_queue) << 8) |
+		       (queue_pop(cdr->data_queue) << 16) | (queue_pop(cdr->data_queue) << 24);
+
+	if(queue_empty(cdr->data_queue)) {
+		cdr->regs.ctrl &= ~CTRL_DATA_REQUEST;
+	}
+	return word;
 }
 
 uint16_t psx_cdr_read16(struct psx_region* reg, uint32_t addr) {

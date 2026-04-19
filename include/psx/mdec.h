@@ -12,6 +12,10 @@
 #define PSX_MDEC_MB_BUFFER_SIZE (20)
 #define PSX_MDEC_MB_SIZE (16 * 16 * 3)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct psx_mdec {
 	struct {
 		uint32_t command;
@@ -64,5 +68,9 @@ uint32_t psx_mdec_direct_out(struct psx_mdec* mdec);
 
 uint32_t psx_mdec_read32(struct psx_region* reg, uint32_t addr);
 void psx_mdec_write32(struct psx_region* reg, uint32_t addr, uint32_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_MDEC_H

@@ -3,6 +3,10 @@
 
 #include <psx/memory.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
 	PSX_DMA_MODE_MANUAL     = 0,
 	PSX_DMA_MODE_REQUEST    = 1,
@@ -53,5 +57,9 @@ uint16_t psx_dmac_read16(struct psx_region* reg, uint32_t addr);
 void psx_dmac_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_dmac_read8(struct psx_region* reg, uint32_t addr);
 void psx_dmac_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_DMA_H

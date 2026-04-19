@@ -2,8 +2,7 @@
 #include <psx/sched.h>
 #include <psx/irq.h>
 
-#include "backupunit.h"
-#include "pad.h"
+#include "input/common.h"
 #include "log.h"
 #include "rdef/sio.h"
 
@@ -35,69 +34,48 @@ void psx_sio_init(struct psx_sio* sio) {
 
 void psx_sio_reset(struct psx_sio* sio) {
 	memset(&sio->regs, 0, sizeof(sio->regs));
-	sio->tx_address = PSX_SIO_DEV_NONE;
+	sio->selected_dev = NULL;
 	sio->irq_scheduled = false;
 	sio->regs.stat = (STAT_TXREADY | STAT_TXIDLE);
 }
 
 static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 	sio->regs.stat |= STAT_RXREADY;
-	if(device_id == PSX_SIO_DEV_CONTROLLER) {
-		struct psx_pad* pad = sio->dev.pad[SIO0_PORT(sio)];
-		if(!pad) {
-			// pad[port] is not connected, the system will try to read the device ID 
-			// anyway and the response should just be HiZ
-			sio->regs.stat &= ~STAT_DSR;
-			return false;
-		}
-		log_trace("SIO0: selected device 0x%02x", device_id);
-		sio->tx_address = device_id;
-		sio->regs.stat &= ~STAT_RXREADY;
-		
-		if(!sio->irq_scheduled) {
-			sio->irq_scheduled = true;
-			// TX and RX lines will be busy until HiZ arrives
-			sio->regs.stat &= ~(STAT_TXREADY | STAT_TXIDLE);
-			psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
-		} else {
-			log_error("SIO0: cannot schedule selection IRQ");
-		}
-		return true;
-	} else if(device_id >= PSX_SIO_DEV_MEMCARD) {
-		struct psx_bu* bu = sio->dev.bu[SIO0_PORT(sio)];
-		if(!bu) {
-			// bu[port] is not connected, the system will try to read the device ID 
-			// anyway and the response should just be HiZ
-			sio->regs.stat &= ~STAT_DSR;
-			return false;
-		}
-		log_trace("SIO0: selected device 0x%02x", device_id);
-		sio->tx_address = device_id;
-		sio->regs.stat &= ~STAT_RXREADY;
-		
-		if(!sio->irq_scheduled) {
-			sio->irq_scheduled = true;
-			// TX and RX lines will be busy until HiZ arrives
-			sio->regs.stat &= ~(STAT_TXREADY | STAT_TXIDLE);
-			psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
-		} else {
-			log_error("SIO0: cannot schedule selection IRQ");
-		}
-		return true;
-	} else {
-		log_error("SIO0: unsupported device selected");
-		sio->regs.stat &= ~STAT_DSR;
+	struct sio_dev* dev = NULL;
+	if(device_id >= PSX_SIO_DEV_MEMCARD) {
+		dev = sio->dev.bu[SIO0_PORT(sio)];
+	} else if(device_id == PSX_SIO_DEV_CONTROLLER) {
+		dev = sio->dev.in[SIO0_PORT(sio)];
 	}
-	return false;
+
+	if(!dev) {
+		// device is not connected, the system will try to read the device ID 
+		// anyway and the response should just be HiZ
+		sio->regs.stat &= ~STAT_DSR;
+		return false;
+	}
+	log_trace("SIO0: selected device 0x%02x", device_id);
+	sio->selected_dev = dev;
+	sio->regs.stat &= ~STAT_RXREADY;
+
+	if(!sio->irq_scheduled) {
+		sio->irq_scheduled = true;
+		// TX and RX lines will be busy until HiZ arrives
+		sio->regs.stat &= ~(STAT_TXREADY | STAT_TXIDLE);
+		psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
+	} else {
+		log_error("SIO0: cannot schedule selection IRQ");
+	}
+	return true;
 }
 
 static void unselect_device(struct psx_sio* sio) {
-	log_trace("SIO0: unselected device 0x%02x", sio->tx_address);
-	if(sio->dev.pad[0]) {
-		sio->dev.pad[0]->reset(sio->dev.pad[0]);
+	log_trace("SIO0: unselected device 0x%02x", (sio->selected_dev) ? sio->selected_dev->id : 0x00);
+	if(sio->dev.in[0]) {
+		sio->dev.in[0]->reset(sio->dev.in[0]);
 	}
-	if(sio->dev.pad[1]) {
-		sio->dev.pad[1]->reset(sio->dev.pad[1]);
+	if(sio->dev.in[1]) {
+		sio->dev.in[1]->reset(sio->dev.in[1]);
 	}
 	if(sio->dev.bu[0]) {
 		sio->dev.bu[0]->reset(sio->dev.bu[0]);
@@ -111,99 +89,43 @@ static void unselect_device(struct psx_sio* sio) {
 		psx_sched_remove_ev(sio->sys->sched, byte_received_irq.id);
 	}
 
-	sio->tx_address = PSX_SIO_DEV_NONE;
+	sio->selected_dev = NULL;
 }
 
 static void do_transmission(struct psx_sio* sio, uint8_t val) {
-	if(sio->tx_address == PSX_SIO_DEV_NONE && (sio->regs.ctrl & CTRL_DTR)) {
+	if(!sio->selected_dev && (sio->regs.ctrl & CTRL_DTR)) {
 		if(!do_tx_select(sio, val)) {
 			// no device selected, the system will just read from floating pins
 			return;
 		}
 	}
 
-	/* TODO: generalize this interface, could live inside an internal header
-	 *	struct sio_dev {
-	 *		bool (*send)(struct sio_dev*, uint8_t);
-	 *		uint8_t (*recv)(struct sio_dev*);
-	 *		void (*reset)(struct sio_dev*);
-	 *		bool (*tx_finished)(struct sio_dev*);
-	 *	};
-	 * then just bind the current device and call its functions
-	 * directly (by taking &xxx->dev).
-	 */
-	struct psx_pad* pad;
-	struct psx_bu* bu;
-	switch(sio->tx_address) {
-	case PSX_SIO_DEV_CONTROLLER:
-		pad = sio->dev.pad[SIO0_PORT(sio)];
-		if(pad->send(pad, val)) {
-			sio->regs.stat |= STAT_DSR;
-			// if the device acknowledged the transmission then 
-			// the TX line will be busy until the response arrives
-			sio->regs.stat &= ~STAT_TXIDLE;
-			// last byte gets no interrupt
-			if(!sio->irq_scheduled && !pad->tx_finished(pad)) {
-				sio->irq_scheduled = true;
-				psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
-			}
-		} else {
-			sio->regs.stat &= ~STAT_DSR;
+	struct sio_dev* dev = sio->selected_dev;
+	if(dev->send(dev, val)) {
+		sio->regs.stat |= STAT_DSR;
+		// if the device acknowledged the transmission then 
+		// the TX line will be busy until the response arrives
+		sio->regs.stat &= ~STAT_TXIDLE;
+		// last byte gets no interrupt
+		if(!sio->irq_scheduled && !dev->tx_finished(dev)) {
+			sio->irq_scheduled = true;
+			psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
 		}
-		break;
-	case PSX_SIO_DEV_MEMCARD:
-		bu = sio->dev.bu[SIO0_PORT(sio)];
-		log_warn("SIO0: bu sent 0x%02x", val);
-		if(bu->send(bu, val)) {
-			sio->regs.stat |= STAT_DSR;
-			// if the device acknowledged the transmission then 
-			// the TX line will be busy until the response arrives
-			sio->regs.stat &= ~STAT_TXIDLE;
-			// last byte gets no interrupt
-			if(!sio->irq_scheduled && !bu->tx_finished(bu)) {
-				sio->irq_scheduled = true;
-				psx_sched_add_ev(sio->sys->sched, &byte_received_irq);
-			} else {
-				log_warn("SIO0: bu transmission over");
-			}
-		} else {
-			sio->regs.stat &= ~STAT_DSR;
-		}
-		break;
-	case PSX_SIO_DEV_NONE:
-	default:
-		log_error("SIO0: write to no device");
-		break;
+	} else {
+		sio->regs.stat &= ~STAT_DSR;
 	}
 }
 
 static uint8_t rx_update(struct psx_sio* sio) {
-	uint8_t val = 0xff;
-
-	struct psx_pad* pad;
-	struct psx_bu* bu;
-	sio->regs.stat &= ~STAT_RXREADY;
-	switch(sio->tx_address) {
-	case PSX_SIO_DEV_CONTROLLER:
-		pad = sio->dev.pad[SIO0_PORT(sio)];
-		log_trace("SIO0: pad read %s", (sio->regs.stat & STAT_RXREADY) ? "(data ready)" : "(not ready)");
-		val = pad->recv(pad);
+	struct sio_dev* dev = sio->selected_dev;
+	if(dev) {
+		log_trace("SIO0: device read %s", (sio->regs.stat & STAT_RXREADY) ? "(data ready)" : "(not ready)");
 		sio->regs.stat |= STAT_RXREADY;
-		break;
-	case PSX_SIO_DEV_MEMCARD:
-		bu = sio->dev.bu[SIO0_PORT(sio)];
-		log_trace("SIO0: bu read %s", (sio->regs.stat & STAT_RXREADY) ? "(data ready)" : "(not ready)");
-		val = bu->recv(bu);
-		log_warn("SIO0: bu got 0x%02x", val);
-		sio->regs.stat |= STAT_RXREADY;
-		break;
-	case PSX_SIO_DEV_NONE:
-	default:
-		// log_error("SIO0: read from no device");
-		break;
+		return dev->recv(dev);
 	}
 
-	return val;
+	sio->regs.stat &= ~STAT_RXREADY;
+	return 0xff;
 }
 
 uint32_t psx_sio_read32(struct psx_region* reg, uint32_t addr) {
@@ -242,7 +164,7 @@ static void handle_write(struct psx_sio* sio, uint32_t off) {
 		sio->regs.ctrl &= ~CTRL_RESET;
 	}
 
-	if(!(sio->regs.ctrl & CTRL_DTR) && sio->tx_address != PSX_SIO_DEV_NONE) {
+	if(!(sio->regs.ctrl & CTRL_DTR) && sio->selected_dev) {
 		unselect_device(sio);
 	}
 }

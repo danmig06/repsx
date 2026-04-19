@@ -1,7 +1,8 @@
 #include <psx/system.h>
+#include <psx/sio.h>
 
 #include "backupunit.h"
-#include "util.h"
+#include "../util.h"
 
 #include <string.h>
 
@@ -11,8 +12,20 @@
 #define BU_INDEX(bu, bu_array) (((bu) - (bu_array)) / sizeof(*(bu)))
 
 static struct psx_bu backup_unit[2] = { 
-	{ .send = bu_send, .recv = bu_recv, .reset = bu_reset, .tx_finished = bu_tx_finished },
-	{ .send = bu_send, .recv = bu_recv, .reset = bu_reset, .tx_finished = bu_tx_finished },
+	{
+		.dev = {
+			.id = PSX_SIO_DEV_MEMCARD,
+			.send = bu_send, .recv = bu_recv,
+			.reset = bu_reset, .tx_finished = bu_tx_finished
+		}
+	},
+	{
+		.dev = {
+			.id = PSX_SIO_DEV_MEMCARD,
+			.send = bu_send, .recv = bu_recv,
+			.reset = bu_reset, .tx_finished = bu_tx_finished
+		}
+	}
 };
 
 enum {
@@ -221,17 +234,22 @@ static void process_send(struct psx_bu* bu, uint8_t val) {
 	}
 }
 
-struct psx_bu* bu_connect(int n, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
+struct sio_dev* bu_connect(int n, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
 	n &= 1;
 	backup_unit[n].host.data = host_data;
 	backup_unit[n].host.write_sector = write_fn;
 	backup_unit[n].host.read_sector = read_fn;
+	backup_unit[n].processing_command = false;
+	backup_unit[n].session_active = false;
+	backup_unit[n].current_command = 0;
+	backup_unit[n].command_state = 0;
 	memset(&backup_unit[n].sector, 0, sizeof(backup_unit[n].sector));
 	backup_unit[n].flag = FLG_DEFAULT;
-	return &backup_unit[n];
+	return &backup_unit[n].dev;
 }
 
-void bu_reset(struct psx_bu* bu) {
+void bu_reset(struct sio_dev* dev) {
+	struct psx_bu* bu = (struct psx_bu*)dev;
 	if(bu->current_command != 0 && bu->command_state != 0) {
 		log_warn("BU: reset");
 	}
@@ -242,7 +260,8 @@ void bu_reset(struct psx_bu* bu) {
 	memset(&bu->sector, 0, sizeof(bu->sector));
 }
 
-bool bu_send(struct psx_bu* bu, uint8_t byte) {
+bool bu_send(struct sio_dev* dev, uint8_t byte) {
+	struct psx_bu* bu = (struct psx_bu*)dev;
 	if(!bu->session_active) {
 		// prepare our initial response 
 		bu->response = 0xff;
@@ -275,13 +294,15 @@ bool bu_send(struct psx_bu* bu, uint8_t byte) {
 	return true;
 }
 
-uint8_t bu_recv(struct psx_bu* bu) {
+uint8_t bu_recv(struct sio_dev* dev) {
+	struct psx_bu* bu = (struct psx_bu*)dev;
 	uint8_t resp = bu->response;
 	bu->response = 0xff;
 	return resp;
 }
 
-bool bu_tx_finished(struct psx_bu* bu) {
+bool bu_tx_finished(struct sio_dev* dev) {
+	struct psx_bu* bu = (struct psx_bu*)dev;
 	switch(bu->current_command) {
 	case CMD_READ_DATA:
 		return bu->command_state == (BU_STATE_R_END + 1);

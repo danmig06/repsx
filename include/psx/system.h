@@ -6,6 +6,12 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#define PSX_NO_DISC NULL
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
 	PSX_LOG_LEVEL_TRACE,
 	PSX_LOG_LEVEL_DEBUG,
@@ -14,6 +20,11 @@ enum {
 	PSX_LOG_LEVEL_ERROR,
 	PSX_LOG_LEVEL_FATAL,
 	PSX_LOG_LEVEL_DISABLE,
+};
+
+enum {
+	PSX_SIG_TRAY_OPEN,
+	PSX_SIG_TRAY_CLOSED,
 };
 
 // needed for pad drivers
@@ -61,17 +72,22 @@ struct psx_system {
 
 void psx_set_log_level(int level);
 
+struct psx_system* psx_system_alloc(void);
 bool psx_system_init(struct psx_system* sys, const char* bios_path);
+void psx_system_uninit(struct psx_system* sys);
 void psx_system_add_pad(struct psx_system* sys, int port, void* host_data, psx_padpollfn_t pollfn);
 void psx_system_remove_pad(struct psx_system* sys, int port);
 void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn);
 void psx_system_remove_mcd(struct psx_system* sys, int port);
 
-void psx_system_set_tray_open(struct psx_system* sys, bool opened);
-void psx_system_insert_disc(struct psx_system* sys, struct psx_disc* disc);
-void psx_system_eject_disc(struct psx_system* sys);
+void psx_system_signal(struct psx_system* sys, int sig);
+void psx_system_set_disc(struct psx_system* sys, struct psx_disc* disc);
 
 void psx_system_update(struct psx_system* sys);
 void psx_system_start(struct psx_system* sys);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_SYSTEM_H

@@ -262,13 +262,33 @@ static void _put_response(struct cdr_event* ev, void* rb, uint8_t size) {
 	ev->resp_size += size;
 }
 
-static uint8_t cdr_pop_param(struct psx_cdrom* cdr) {
+static inline uint8_t cdr_pop_param(struct psx_cdrom* cdr) {
 	return queue_pop(cdr->param_queue);
 }
 
-static void run_cmd(struct psx_cdrom* cdr, unsigned n_args, void (*cmd_func)(struct psx_cdrom*)) {
+void psx_cdr_tray_open(struct psx_cdrom* cdr) {
+	if(ack_ev.active) {
+		cdr_remove_ev(cdr->sys->sched, &ack_ev);
+	}
+	if(completion_ev.active) {
+		cdr_remove_ev(cdr->sys->sched, &completion_ev);
+	}
+	// all status bits besides shell open and error are cleared
+	cdr->state &= (STAT_SHELL_OPEN | STAT_ERROR);
+	cdr->state |= STAT_SHELL_OPEN;
+	queue_clear(cdr->resp_queue);
+	cdr->shell_open = true;
+	queue_push(cdr->resp_queue, cdr->state | STAT_SEEK_ERROR);
+	queue_push(cdr->resp_queue, CDROM_ERR_SHELL_OPENED);
+	cdr_raise_irq(cdr, 5);
+}
+
+static inline void run_cmd(struct psx_cdrom* cdr, void (*cmd_func)(struct psx_cdrom*), uint32_t n_args, bool check_disc) {
 	if(queue_items(cdr->param_queue) != n_args) {
 		enq_error(cdr, CDROM_ERR_PARAMETERS, 0);
+		return;
+	} else if(check_disc && !cdr->disc) {
+		enq_error(cdr, CDROM_ERR_RESP_NOT_READY, 0);
 		return;
 	}
 	cdr->regs.ctrl |= CTRL_BUSY;
@@ -278,14 +298,17 @@ static void run_cmd(struct psx_cdrom* cdr, unsigned n_args, void (*cmd_func)(str
 void cdr_run_cmd(struct psx_cdrom* cdr) {
 	switch(cdr->regs.command) {
 	case CMD_NOP:
-		run_cmd(cdr, 0, CdlNop);
+		run_cmd(cdr, CdlNop, 0, false);
 		break;
 	case CMD_SETLOC:
-		run_cmd(cdr, 3, CdlSetloc);
+		run_cmd(cdr, CdlSetloc, 3, true);
 		break;
 	case CMD_PLAY:
 		if(queue_items(cdr->param_queue) > 1) {
 			enq_error(cdr, CDROM_ERR_PARAMETERS, 0);
+			break;
+		} else if(!cdr->disc) {
+			enq_error(cdr, CDROM_ERR_RESP_NOT_READY, 0);
 			break;
 		}
 		cdr->regs.ctrl |= CTRL_BUSY;
@@ -293,56 +316,56 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 		break;
 	case CMD_READN:
 	case CMD_READS:
-		run_cmd(cdr, 0, CdlRead);
+		run_cmd(cdr, CdlRead, 0, true);
 		break;
 	case CMD_MOTORON:
-		run_cmd(cdr, 0, CdlMotorOn);
+		run_cmd(cdr, CdlMotorOn, 0, true);
 		break;
 	case CMD_STOP:
-		run_cmd(cdr, 0, CdlStop);
+		run_cmd(cdr, CdlStop, 0, true);
 		break;
 	case CMD_PAUSE:
-		run_cmd(cdr, 0, CdlPause);
+		run_cmd(cdr, CdlPause, 0, true);
 		break;
-	case CMD_TEST:
-		run_cmd(cdr, 1, CdlTest);
+	case CMD_INIT:
+		run_cmd(cdr, CdlInit, 0, false);
 		break;
 	case CMD_MUTE:
-		run_cmd(cdr, 0, CdlMute);
+		run_cmd(cdr, CdlMute, 0, true);
 		break;
 	case CMD_DEMUTE:
-		run_cmd(cdr, 0, CdlDemute);
+		run_cmd(cdr, CdlDemute, 0, true);
 		break;
 	case CMD_SETFILTER:
-		run_cmd(cdr, 2, CdlSetfilter);
+		run_cmd(cdr, CdlSetfilter, 2, true);
+		break;
+	case CMD_SETMODE:
+		run_cmd(cdr, CdlSetmode, 1, false);
 		break;
 	case CMD_GETLOCL:
-		run_cmd(cdr, 0, CdlGetlocL);
+		run_cmd(cdr, CdlGetlocL, 0, true);
 		break;
 	case CMD_GETLOCP:
-		run_cmd(cdr, 0, CdlGetlocP);
+		run_cmd(cdr, CdlGetlocP, 0, true);
 		break;
 	case CMD_GETTN:
-		run_cmd(cdr, 0, CdlGetTN);
+		run_cmd(cdr, CdlGetTN, 0, true);
 		break;
 	case CMD_GETTD:
-		run_cmd(cdr, 1, CdlGetTD);
+		run_cmd(cdr, CdlGetTD, 1, true);
+		break;
+	case CMD_TEST:
+		run_cmd(cdr, CdlTest, 1, false);
 		break;
 	case CMD_SEEKL:
 	case CMD_SEEKP:
-		run_cmd(cdr, 0, CdlSeek);
-		break;
-	case CMD_SETMODE:
-		run_cmd(cdr, 1, CdlSetmode);
-		break;
-	case CMD_INIT:
-		run_cmd(cdr, 0, CdlInit);
+		run_cmd(cdr, CdlSeek, 0, true);
 		break;
 	case CMD_GETID:
-		run_cmd(cdr, 0, CdlGetID);
+		run_cmd(cdr, CdlGetID, 0, false);
 		break;
 	case CMD_READTOC:
-		run_cmd(cdr, 0, CdlReadTOC);
+		run_cmd(cdr, CdlReadTOC, 0, false);
 		break;
 	default:
 		log_fatal("CDROM: unhandled command 0x%02x", cdr->regs.command);
@@ -353,8 +376,10 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 }
 
 void CdlNop(struct psx_cdrom* cdr) {
+	if(!cdr->shell_open) {
+		cdr->state &= ~STAT_SHELL_OPEN;
+	}
 	log_debug("CDROM: CdlNop() -> 0x%02x", cdr->state);
-	// TODO: reportedly "CdlNop resets the ShellOpen flag for all subsequent commands, unless the shell is still open"
 	put_ack_response(&cdr->state, 1);
 	cdr_schedule_ack_ev(cdr, 3);
 }
@@ -735,7 +760,9 @@ void CdlPause(struct psx_cdrom* cdr) {
 
 static void init_comp_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_cdrom* cdr = sched->sys->cdrom;
-	cdr->state = STAT_MOTOR_ON;
+	// keep the shell open bit
+	cdr->state &= STAT_SHELL_OPEN;
+	cdr->state |= STAT_MOTOR_ON;
 	cdr->disc_mode = MODE_SECTOR_SIZE;
 	put_comp_response(&cdr->state, 1);
 	def_comp_evcb(sched, self);
@@ -869,7 +896,7 @@ void CdlTest(struct psx_cdrom* cdr) {
 
 void CdlGetID(struct psx_cdrom* cdr) {
 	log_debug("CDROM: CdlGetID()");
-	if(cdr->state & STAT_SHELL_OPEN /* OR spin-up OR detect-busy */) {
+	if(cdr->shell_open) {
 		enq_error(cdr, CDROM_ERR_RESP_NOT_READY, 0);
 		return;
 	}
@@ -905,7 +932,7 @@ void CdlGetID(struct psx_cdrom* cdr) {
 			break;
 		}
 	} else {
-		response.flags |= IDFLAG_NO_DISC;
+		response.flags |= IDFLAG_NO_DISC | IDFLAG_UNLICENSED;
 	}
 
 	put_comp_response(&response, sizeof(response));

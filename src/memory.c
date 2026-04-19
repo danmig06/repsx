@@ -168,6 +168,12 @@ void psx_phys_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 }
 
 uint32_t psx_null_read32(struct psx_region* reg, uint32_t addr) {
+	/*
+	if(PSX_MEM_REAL_ADDR(addr) == 0x1f802080) {
+		// openbios needs this to boot up
+		return 0x58534350;
+	}
+	*/
 	log_warn("Unhandled read32 at address 0x%08x <%s+0x%x>", addr, reg->name, PSX_MEM_REAL_ADDR(addr) - reg->start);
 	return 0;
 }

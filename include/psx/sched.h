@@ -5,6 +5,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
 	PSX_SEV_ID_HBLANK,
 	PSX_SEV_ID_HBLANK_END,
@@ -40,6 +44,10 @@ void psx_sched_init(struct psx_sched* sched);
 void psx_sched_add_ev(struct psx_sched* sched, struct psx_sev* ev);
 void psx_sched_remove_ev(struct psx_sched* sched, uint8_t id);
 void psx_sched_update(struct psx_sched* sched, uint32_t clocks);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_SCHED_H
 

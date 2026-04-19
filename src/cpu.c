@@ -14,7 +14,6 @@
 #include <stdlib.h>
 
 #define HOOK_KCALLS
-// #define NO_LOAD_CANCELING
 
 void psx_cpu_init(struct psx_cpu* cpu) {
 	psx_cpu_reset(cpu);
@@ -22,59 +21,14 @@ void psx_cpu_init(struct psx_cpu* cpu) {
 
 void psx_cpu_reset(struct psx_cpu* cpu) {
 	memset(&cpu->regs, 0, sizeof(cpu->regs));
-	cpu->regs.pc = PSX_RESET_ADDR;
-	cpu->next_pc = cpu->regs.pc + 4;
 	memset(&cpu->cop0_regs, 0, sizeof(cpu->cop0_regs));
 	memset(&cpu->gte_regs, 0, sizeof(cpu->gte_regs));
 	memset(&cpu->load_slot, 0, sizeof(cpu->load_slot));
+	cpu->regs.pc = PSX_RESET_ADDR;
+	cpu->next_pc = cpu->regs.pc + 4;
 	cpu->branch = false;
 	cpu->cop0_regs.sr |= SR_COP0_EN;
 	cpu->cop0_regs.prid = 2;
-}
-
-uint32_t psx_cpu_get_reg(struct psx_cpu* cpu, unsigned index) {
-	return cpu->regs.r[index];
-}
-
-void psx_cpu_set_reg(struct psx_cpu* cpu, unsigned index, uint32_t val) {
-	if(index == 0) {
-		return;
-	}
-
-#ifndef NO_LOAD_CANCELING
-	if(cpu->load_slot.target == index) {
-		cpu->load_slot.target = 0;
-	}
-#endif
-
-	cpu->regs.r[index] = val;
-}
-
-static const uint32_t cop0_reg_write_mask_table[] = {
-	0x00000000, // r0
-	0x00000000, // r1
-	0x00000000, // r2
-	0xffffffff, // BPC
-	0x00000000, // r4
-	0xffffffff, // BDA
-	0x00000000, // JUMPDEST
-	0xffc0f03f, // DCIC
-	0x00000000, // BadVaddr
-	0xffffffff, // BDAM
-	0x00000000, // r10
-	0xffffffff, // BPCM
-	0xffffffff, // SR
-	0x00000300, // CAUSE
-	0x00000000, // EPC
-	0x00000000  // PRID
-};
-
-uint32_t psx_cpu_get_cop0_reg(struct psx_cpu* cpu, unsigned index) {
-	return cpu->cop0_regs.r[index];
-}
-
-void psx_cpu_set_cop0_reg(struct psx_cpu* cpu, unsigned index, uint32_t val) {
-	cpu->cop0_regs.r[index] = val & cop0_reg_write_mask_table[index];
 }
 
 static uint32_t fetch(struct psx_cpu* cpu) {
@@ -89,76 +43,61 @@ static void execute(struct psx_cpu* cpu, uint32_t insn) {
 	cpu->clocks = PSX_CPU_CPI;
 	if(FUNC(insn) == OP_SPECIAL) {
 		switch(SUBFUNC(insn)) {
-		case SFNC_SLL: sll(cpu, insn); return;
-		case SFNC_OR: or(cpu, insn); return;
-		case SFNC_JR: jr(cpu, insn); return;
-		case SFNC_SLTU: sltu(cpu, insn); return;
-		case SFNC_ADDU: addu(cpu, insn); return;
-		case SFNC_ADD: add(cpu, insn); return;
-		case SFNC_AND: and(cpu, insn); return;
-		case SFNC_JALR: jalr(cpu, insn); return;
-		case SFNC_SUB: sub(cpu, insn); return;
-		case SFNC_SUBU: subu(cpu, insn); return;
-		case SFNC_SRA: sra(cpu, insn); return;
-		case SFNC_SLT: slt(cpu, insn); return;
-		case SFNC_DIV: ediv(cpu, insn); return;
-		case SFNC_MFLO: mflo(cpu, insn); return;
-		case SFNC_SRL: srl(cpu, insn); return;
-		case SFNC_DIVU: divu(cpu, insn); return;
-		case SFNC_MFHI: mfhi(cpu, insn); return;
-		case SFNC_SYSCALL: scall(cpu, insn); return;
-		case SFNC_MTLO: mtlo(cpu, insn); return;
-		case SFNC_MTHI: mthi(cpu, insn); return;
-		case SFNC_SLLV: sllv(cpu, insn); return;
-		case SFNC_NOR: nor(cpu, insn); return;
-		case SFNC_SRAV: srav(cpu, insn); return;
-		case SFNC_SRLV: srlv(cpu, insn); return;
-		case SFNC_MULTU: multu(cpu, insn); return;
-		case SFNC_XOR: xor(cpu, insn); return;
-		case SFNC_MULT: mult(cpu, insn); return;
-		case SFNC_BREAK: bk(cpu, insn); return;
+		case SFNC_SLL: sll(cpu, insn); break;
+		case SFNC_OR: or(cpu, insn); break;
+		case SFNC_JR: jr(cpu, insn); break;
+		case SFNC_SLTU: sltu(cpu, insn); break;
+		case SFNC_ADDU: addu(cpu, insn); break;
+		case SFNC_ADD: add(cpu, insn); break;
+		case SFNC_AND: and(cpu, insn); break;
+		case SFNC_JALR: jalr(cpu, insn); break;
+		case SFNC_SUB: sub(cpu, insn); break;
+		case SFNC_SUBU: subu(cpu, insn); break;
+		case SFNC_SRA: sra(cpu, insn); break;
+		case SFNC_SLT: slt(cpu, insn); break;
+		case SFNC_DIV: ediv(cpu, insn); break;
+		case SFNC_MFLO: mflo(cpu, insn); break;
+		case SFNC_SRL: srl(cpu, insn); break;
+		case SFNC_DIVU: divu(cpu, insn); break;
+		case SFNC_MFHI: mfhi(cpu, insn); break;
+		case SFNC_SYSCALL: scall(cpu, insn); break;
+		case SFNC_MTLO: mtlo(cpu, insn); break;
+		case SFNC_MTHI: mthi(cpu, insn); break;
+		case SFNC_SLLV: sllv(cpu, insn); break;
+		case SFNC_NOR: nor(cpu, insn); break;
+		case SFNC_SRAV: srav(cpu, insn); break;
+		case SFNC_SRLV: srlv(cpu, insn); break;
+		case SFNC_MULTU: multu(cpu, insn); break;
+		case SFNC_XOR: xor(cpu, insn); break;
+		case SFNC_MULT: mult(cpu, insn); break;
+		case SFNC_BREAK: bk(cpu, insn); break;
 		default:
 			ill(cpu, insn);
 			cpu->clocks -= PSX_CPU_CPI;
-			return;
 		}
-	}
-
-	if(FUNC(insn) & OP_COPMASK) {
-		/*
-		if(COP_NUM(insn) == 2) {
-			fprintf(stderr, "unhandled COP2 instruction 0x%08x at 0x%08x\n", insn, cpu->regs.pc);
-			return;
-		}
-		*/
+	} else if(FUNC(insn) & OP_COPMASK) {
 		// COP2 <imm25> (fast path)
 		if((insn & 0xfe000000) == 0x4a000000) { 
 			gte_run_cmd(cpu, insn);
 			return;
 		}
-		
+
 		switch(FUNC(insn) & 0b111000) {
 		case CPFC_LWCN: lwcn(cpu, insn); return;
 		case CPFC_SWCN: swcn(cpu, insn); return;
-		default:
-			break;
-		}	
+		}
 
 		switch(COPFUNC(insn)) {
-		case CPFC_MFCN: mfcn(cpu, insn); return;
-		case CPFC_MTCN: mtcn(cpu, insn); return;
-		case CPFC_CFCN: cfcn(cpu, insn); return;
-		case CPFC_CTCN: ctcn(cpu, insn); return;
-		case CPFC_RFE:  rfe(cpu, insn);  return;
+		case CPFC_MFCN: mfcn(cpu, insn); break;
+		case CPFC_MTCN: mtcn(cpu, insn); break;
+		case CPFC_CFCN: cfcn(cpu, insn); break;
+		case CPFC_CTCN: ctcn(cpu, insn); break;
+		case CPFC_RFE:  rfe(cpu, insn);  break;
 		default:
 			ill(cpu, insn);
 			cpu->clocks -= PSX_CPU_CPI;
-			return;
 		}
-
-	}
-
-	switch(FUNC(insn)) {
+	} else switch(FUNC(insn)) {
 	case OP_LUI: lui(cpu, insn); break;
 	case OP_ORI: ori(cpu, insn); break;
 	case OP_SW: sw(cpu, insn); break;
@@ -189,9 +128,7 @@ static void execute(struct psx_cpu* cpu, uint32_t insn) {
 	default:
 		ill(cpu, insn);
 		cpu->clocks -= PSX_CPU_CPI;
-		return;
 	}
-
 }
 
 void psx_cpu_register_irq(struct psx_cpu* cpu) {
@@ -205,7 +142,7 @@ void psx_cpu_clear_irq(struct psx_cpu* cpu) {
 	CAUSE_IP_SET(cpu->cop0_regs.cause, 0);
 }
 
-bool psx_cpu_check_irqs(struct psx_cpu* cpu) {
+static inline bool cpu_check_irqs(struct psx_cpu* cpu) {
 	return (cpu->cop0_regs.sr & SR_IE) && ((SR_IMASK_GET(cpu->cop0_regs.sr) >> 2) & CAUSE_IP_GET(cpu->cop0_regs.cause));
 }
 
@@ -217,7 +154,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 
 	uint32_t current_instruction = fetch(cpu);
 #ifdef HOOK_KCALLS
-	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xa0) { 
+	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xa0) {
 		switch(cpu->regs.r[9]) {
 		case 0x09:
 		case 0x3c:
@@ -226,6 +163,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 		case 0x3e:
 			if(!cpu->regs.a0) {
 				fputs("<NULL>", stderr);
+				break;
 			}
 
 			char* str = (char*)&cpu->sys->memory->phys[cpu->regs.a0 & 0x1fffff];
@@ -240,9 +178,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 			exit(cpu->regs.r[5]);
 			break;
 		}
-	}
-
-	if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xb0) { 
+	} else if(PSX_MEM_REAL_ADDR(cpu->regs.pc) == 0xb0) {
 		switch(cpu->regs.r[9]) {
 		case 0x3b:
 		case 0x3d:
@@ -251,6 +187,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 		case 0x3f:
 			if(!cpu->regs.a0) {
 				fputs("<NULL>", stderr);
+				break;
 			}
 
 			char* str = (char*)&cpu->sys->memory->phys[cpu->regs.a0 & 0x1fffff];
@@ -271,15 +208,9 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 	}
 	*/
 
-	/*
-	if(cpu->regs.pc == 0x8004c710) {
-		__asm__ volatile ("int3");
-	}
-	*/
-
 	cpu->regs.pc = cpu->next_pc;
 	cpu->next_pc += 4;
-	if(psx_cpu_check_irqs(cpu)) {
+	if(cpu_check_irqs(cpu)) {
 		if((current_instruction & 0xfe000000) == 0x4a000000) {
 			gte_run_cmd(cpu, current_instruction);
 		}
@@ -291,10 +222,7 @@ void psx_cpu_fetch_execute(struct psx_cpu* cpu) {
 	if(cpu->load_slot.delay) {
 		cpu->load_slot.delay = false;
 	} else if(cpu->load_slot.target != 0) {
-		// psx_cpu_set_reg(cpu, cpu->load_slot.target, cpu->load_slot.value);
 		cpu->regs.r[cpu->load_slot.target] = cpu->load_slot.value;
-		memset(&cpu->load_slot, 0, sizeof(cpu->load_slot));
+		cpu->load_slot.target = 0;
 	}
-
-	// cpu->clocks += cpu->sys->memory->current_access_delay;
 }

@@ -6,7 +6,11 @@
 
 #include <stdbool.h>
 
-enum psx_sio_dev {
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+enum {
 	PSX_SIO_DEV_NONE       = 0x00,
 	PSX_SIO_DEV_CONTROLLER = 0x01,
 	PSX_SIO_DEV_MEMCARD    = 0x81
@@ -21,10 +25,10 @@ struct psx_sio {
 		uint16_t baudrate_counter;
 	} regs;
 	bool irq_scheduled;
-	enum psx_sio_dev tx_address;
+	struct sio_dev* selected_dev;
 	struct {
-		struct psx_pad* pad[2];
-		struct psx_bu* bu[2];
+		struct sio_dev* in[2];
+		struct sio_dev* bu[2];
 	} dev;
 
 	struct psx_system* sys;
@@ -39,5 +43,9 @@ uint16_t psx_sio_read16(struct psx_region* reg, uint32_t addr);
 void psx_sio_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_sio_read8(struct psx_region* reg, uint32_t addr);
 void psx_sio_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_SIO_H

@@ -1,11 +1,18 @@
 #include <psx.h>
 
-#include "pad.h"
-#include "backupunit.h"
+#include "input/pad.h"
+#include "input/backupunit.h"
 #include "log.h"
 #include "rdef/cdrom.h"
 
 #include <stdbool.h>
+
+#define ALIGN(s, n) ((s & ~(n - 1)) + n)
+#define AS(s) (ALIGN(sizeof(s), 8))
+#define SYS_TOTAL_SIZE(s) (AS(*s) + AS(*s->cpu) + AS(*s->memory) + AS(*s->bios) + AS(*s->mc) + \
+			   AS(*s->gpu) + AS(*s->dmac) + AS(*s->cdrom) + AS(*s->irq) + \
+			   AS(*s->sio) + AS(*s->timer) + AS(*s->spu) + AS(*s->mdec) + \
+			   AS(*s->sched))
 
 void psx_set_log_level(int level) {
 	log_set_quiet(false);
@@ -36,12 +43,39 @@ void psx_set_log_level(int level) {
 	}
 }
 
+#define CLOBBER(o) \
+	do { \
+		o = (void*)(em); \
+		em += AS(*o); \
+	} while(0)
+
+struct psx_system* psx_system_alloc(void) {
+	struct psx_system* sys;
+	size_t total_size = SYS_TOTAL_SIZE(sys);
+	uint8_t* em = calloc(total_size, 1);
+	CLOBBER(sys);
+	CLOBBER(sys->cpu);
+	CLOBBER(sys->memory);
+	CLOBBER(sys->bios);
+	CLOBBER(sys->mc);
+	CLOBBER(sys->gpu);
+	CLOBBER(sys->dmac);
+	CLOBBER(sys->cdrom);
+	CLOBBER(sys->irq);
+	CLOBBER(sys->sio);
+	CLOBBER(sys->timer);
+	CLOBBER(sys->spu);
+	CLOBBER(sys->mdec);
+	CLOBBER(sys->sched);
+	return sys;
+}
+
 bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 	psx_mem_init(sys->memory);
 	psx_memctl_init(sys->mc);
 	sys->memory->sys = sys;
 
-	psx_bios_load(sys->bios, bios_path, true);
+	psx_bios_load(sys->bios, bios_path);
 	sys->bios->sys = sys;
 
 	psx_sched_init(sys->sched);
@@ -79,15 +113,26 @@ bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 	return true;
 }
 
+void psx_system_uninit(struct psx_system* sys) {
+	free(sys->cdrom->out[0].buf);
+	free(sys->cdrom->resp_queue);
+	free(sys->cdrom->data_queue);
+	free(sys->cdrom->param_queue);
+	free(sys->mdec->mb_data);
+	free(sys->spu->out.buf);
+	free(sys->spu->mem);
+	free(sys->memory->phys);
+	free(sys->bios->rom);
+}
+
 // TODO: psx_system_reset
 
 void psx_system_add_pad(struct psx_system* sys, int port, void* host_data, psx_padpollfn_t pollfn) {
-	sys->sio->dev.pad[port] = pad_connect(port, host_data, pollfn);
+	sys->sio->dev.in[port] = pad_connect(port, host_data, pollfn);
 }
 
 void psx_system_remove_pad(struct psx_system* sys, int port) {
-	memset(sys->sio->dev.pad[port], 0, sizeof(*sys->sio->dev.pad[port]));
-	sys->sio->dev.pad[port] = NULL;
+	sys->sio->dev.in[port] = NULL;
 }
 
 void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
@@ -95,26 +140,25 @@ void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_b
 }
 
 void psx_system_remove_mcd(struct psx_system* sys, int port) {
-	memset(sys->sio->dev.bu[port], 0, sizeof(*sys->sio->dev.bu[port]));
 	sys->sio->dev.bu[port] = NULL;
 }
 
-void psx_system_set_tray_open(struct psx_system* sys, bool opened) {
-	if(opened) {
-		sys->cdrom->state |= STAT_SHELL_OPEN;
-	} else {
-		sys->cdrom->state &= ~STAT_SHELL_OPEN;
+void psx_system_signal(struct psx_system* sys, int sig) {
+	switch(sig) {
+	case PSX_SIG_TRAY_OPEN:
+		psx_cdr_tray_open(sys->cdrom);
+		break;
+	case PSX_SIG_TRAY_CLOSED:
+		sys->cdrom->shell_open = false;
+		break;
 	}
 }
 
-void psx_system_insert_disc(struct psx_system* sys, struct psx_disc* disc) {
-	psx_disc_verify(disc);
+void psx_system_set_disc(struct psx_system* sys, struct psx_disc* disc) {
+	if(disc) {
+		psx_disc_verify(disc);
+	}
 	sys->cdrom->disc = disc;
-}
-
-void psx_system_eject_disc(struct psx_system* sys) {
-	// reset console?
-	sys->cdrom->disc = NULL;
 }
 
 void psx_system_update(struct psx_system* sys) {

@@ -41,8 +41,8 @@ static struct psx_sev vblank_event = {
 
 static void gpu_hblank(struct psx_sched* sched, struct psx_sev* self) {
 	psx_tmr_hsync(sched->sys->timer);
-	psx_sched_add_ev(sched, &hblank_end_event);
 	psx_sched_remove_ev(sched, self->id);
+	psx_sched_add_ev(sched, &hblank_end_event);
 }
 
 static int g_dotclock_divider_table[] = { 10, 8, 5, 4, 7 };
@@ -58,7 +58,8 @@ static int get_dotclock_divider(struct psx_gpu* gpu) {
 static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_gpu* gpu = sched->sys->gpu;
 
-	if(!(gpu->gpustat & GPUSTAT_VINTERLACE)) {
+	gpu->scanline_count++;
+	if(gpu->gpustat & GPUSTAT_VINTERLACE) {
 		if(gpu->scanline_count == PSX_GPU_VISIBLE_SCANS_NTSC - 1) {
 			gpu->gpustat ^= GPUSTAT_SCNODD;
 		}
@@ -72,13 +73,18 @@ static void gpu_hblank_end(struct psx_sched* sched, struct psx_sev* self) {
 		gpu->gpustat &= ~GPUSTAT_SCNODD;
 	}
 
-	gpu->scanline_count++;
-	psx_sched_add_ev(sched, &hblank_event);
 	psx_sched_remove_ev(sched, self->id);
+	psx_sched_add_ev(sched, &hblank_event);
 }
 
 static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	struct psx_gpu* gpu = sched->sys->gpu;
+
+	if(gpu->gpustat & GPUSTAT_VINTERLACE) {
+		gpu->gpustat ^= GPUSTAT_INTERLACE_FIELD;
+	} else {
+		gpu->gpustat &= ~GPUSTAT_INTERLACE_FIELD;
+	}
 
 	gpu->scanline_count = 0;
 	psx_tmr_vsync(sched->sys->timer);	
@@ -109,11 +115,10 @@ void psx_gpu_init(struct psx_gpu* gpu) {
 
 void psx_gpu_reset(struct psx_gpu* gpu) {
 	gpu->gpuread = 0;
-	memset(&gpu->gpustat, 0, sizeof(gpu->gpustat));
+	gpu->gpustat = (GPUSTAT_DMA_READY | GPUSTAT_CMD_READY | GPUSTAT_VRAM_READY);
 	memset(&gpu->tex_window, 0, sizeof(gpu->tex_window));
 	memset(&gpu->cmd, 0, sizeof(gpu->cmd));
 	memset(&gpu->draw_off, 0, sizeof(gpu->draw_off));
-	gpu->gpustat = (GPUSTAT_DMA_READY | GPUSTAT_CMD_READY | GPUSTAT_VRAM_READY);
 }
 
 static void gpu_do_gp0(struct psx_gpu* gpu, uint32_t cmd) {
@@ -163,8 +168,16 @@ static void gpu_do_gp0(struct psx_gpu* gpu, uint32_t cmd) {
 				return;
 			}
 		} else {
+			if((cmd_num >= 0x04 && cmd_num <= 0x1e) || (cmd_num >= 0xe7 && cmd_num <= 0xef)) {
+				// NOP mirrors
+				return;
+			}
+
 			switch(cmd_num) {
-			case 0x00: return;
+			case 0x00:
+			case 0x03:
+			case 0xe0:
+				return;
 			case 0x01: 
 				gpu->cmd.execute = gp0_cache_clear; 
 				break;
@@ -251,45 +264,58 @@ void gpu_do_gp1(struct psx_gpu* gpu, uint32_t cmd) {
 
 static void update_gpuread(struct psx_gpu* gpu) {
 	uint32_t off_x, off_y;
-	uint32_t max_x = gpu->blit_state.start_x + gpu->blit_state.w;
-	uint32_t max_y = gpu->blit_state.start_y + gpu->blit_state.h;
+	uint32_t max_x = gpu->blit.box.x + gpu->blit.box.w;
+	uint32_t max_y = gpu->blit.box.y + gpu->blit.box.h;
 	uint32_t packet = 0;
 
-	off_x = gpu->blit_state.x - gpu->blit_state.start_x;
-	off_y = gpu->blit_state.y - gpu->blit_state.start_y;
-	packet |= gpu->blit_state.texels[off_x + (off_y * gpu->blit_state.w)] & 0xffff;
-	gpu->blit_state.x++;
-	if(gpu->blit_state.x == max_x) {
-		if(gpu->blit_state.y == max_y) {
-			gpu->blit_state.is_read = false;
-			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);
-			gpu->blit_state.texels = NULL;
+	off_x = gpu->blit.cx - gpu->blit.box.x;
+	off_y = gpu->blit.cy - gpu->blit.box.y;
+	packet |= gpu->blit.texels[off_x + (off_y * gpu->blit.box.w)] & 0xffff;
+	gpu->blit.cx++;
+	if(gpu->blit.cx == max_x) {
+		gpu->blit.cx = gpu->blit.box.x;
+		gpu->blit.cy++;
+		if(gpu->blit.cy == max_y) {
+			gpu->blit.is_read = false;
+			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit.texels);
+			gpu->blit.texels = NULL;
 			gpu->gpuread = packet;
 			gpu->gpustat &= ~GPUSTAT_VRAM_READY;
 			return;
 		}
-		gpu->blit_state.x = gpu->blit_state.start_x;
-		gpu->blit_state.y++;
 	}
 
-	off_x = gpu->blit_state.x - gpu->blit_state.start_x;
-	off_y = gpu->blit_state.y - gpu->blit_state.start_y;
-	packet |= gpu->blit_state.texels[off_x + (off_y * gpu->blit_state.w)] << 16;
-	gpu->blit_state.x++;
-	if(gpu->blit_state.x == max_x) {
-		if(gpu->blit_state.y == max_y) {
-			gpu->blit_state.is_read = false;
-			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit_state.texels);
-			gpu->blit_state.texels = NULL;
+	off_x = gpu->blit.cx - gpu->blit.box.x;
+	off_y = gpu->blit.cy - gpu->blit.box.y;
+	packet |= gpu->blit.texels[off_x + (off_y * gpu->blit.box.w)] << 16;
+	gpu->blit.cx++;
+	if(gpu->blit.cx == max_x) {
+		gpu->blit.cx = gpu->blit.box.x;
+		gpu->blit.cy++;
+		if(gpu->blit.cy == max_y) {
+			gpu->blit.is_read = false;
+			gpu->renderer.dispose_vram(&gpu->renderer, gpu->blit.texels);
+			gpu->blit.texels = NULL;
 			gpu->gpuread = packet;
 			gpu->gpustat &= ~GPUSTAT_VRAM_READY;
 			return;
 		}
-		gpu->blit_state.x = gpu->blit_state.start_x;
-		gpu->blit_state.y++;
 	}
 
 	gpu->gpuread = packet;
+}
+
+uint32_t psx_gpu_direct_out(struct psx_gpu* gpu) {
+	if(gpu->blit.is_read && gpu->blit.texels != NULL) {
+		update_gpuread(gpu);
+	} else {
+		log_error("GPU: DMA with no ongoing transfer");
+	}
+	return gpu->gpuread;
+}
+
+void psx_gpu_direct_in(struct psx_gpu* gpu, uint32_t word) {
+	gpu_do_gp0(gpu, word);
 }
 
 uint32_t psx_gpu_read32(struct psx_region* reg, uint32_t addr) {
@@ -297,7 +323,7 @@ uint32_t psx_gpu_read32(struct psx_region* reg, uint32_t addr) {
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	if(register_offset == 0) {
-		if(gpu->blit_state.is_read && gpu->blit_state.texels != NULL) {
+		if(gpu->blit.is_read && gpu->blit.texels != NULL) {
 			update_gpuread(gpu);
 		}
 		return gpu->gpuread;
@@ -314,13 +340,9 @@ void psx_gpu_write32(struct psx_region* reg, uint32_t addr, uint32_t val) {
 
 	if(register_offset == 0) {
 		gpu_do_gp0(gpu, val);
-		return;
 	} else if(register_offset == 4) {
 		gpu_do_gp1(gpu, val);
-		return;
 	}
-
-	log_error("Unhandled GPU write32 0x%x:0x%08x", register_offset, val);
 }
 
 uint16_t psx_gpu_read16(struct psx_region* reg, uint32_t addr) {

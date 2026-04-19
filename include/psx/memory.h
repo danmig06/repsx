@@ -20,6 +20,10 @@
 #define PSX_MEM_ADDR_MODE(addr) (((addr) & PSX_MEM_MODE_MASK))
 #define PSX_MEM_REAL_ADDR(addr) ((uint32_t)((addr) & PSX_MEM_ADDR_MASK))
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct psx_region {
 	char* name;
 	uint32_t start;
@@ -65,6 +69,10 @@ uint16_t psx_null_read16(struct psx_region* reg, uint32_t addr);
 void psx_null_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_null_read8(struct psx_region* reg, uint32_t addr);
 void psx_null_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_MEMORY_H
 

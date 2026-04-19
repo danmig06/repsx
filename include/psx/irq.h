@@ -7,6 +7,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum psx_irq_id {
 	PSX_IRQ_ID_VBLANK = 0x001,
 	PSX_IRQ_ID_GPU    = 0x002,
@@ -38,5 +42,9 @@ uint16_t psx_irq_read16(struct psx_region* reg, uint32_t addr);
 void psx_irq_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_irq_read8(struct psx_region* reg, uint32_t addr);
 void psx_irq_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_IRQ_H

@@ -1,13 +1,31 @@
 #include "pad.h"
-#include "util.h"
+#include "../util.h"
+
+#include <psx/sio.h>
 
 #include <string.h>
 
 #define DUALSHOCK_ID(pad) ((pad->config_mode) ? 0xf3 : (pad->analog_mode) ? 0x73 : 0x41)
 
 static struct psx_pad pads[2] = { 
-	{ .send = pad_send, .recv = pad_recv, .reset = pad_reset, .tx_finished = pad_tx_finished },
-	{ .send = pad_send, .recv = pad_recv, .reset = pad_reset, .tx_finished = pad_tx_finished },
+	{
+		.dev = {
+			.id = PSX_SIO_DEV_CONTROLLER,
+			.send = pad_send,
+			.recv = pad_recv,
+			.reset = pad_reset,
+			.tx_finished = pad_tx_finished
+		}
+	},
+	{
+		.dev = {
+			.id = PSX_SIO_DEV_CONTROLLER,
+			.send = pad_send,
+			.recv = pad_recv,
+			.reset = pad_reset,
+			.tx_finished = pad_tx_finished 
+		 }
+	},
 };
 
 enum {
@@ -18,20 +36,26 @@ enum {
 	CMD_RUMBLE_CTRL  = 'M',
 };
 
-struct psx_pad* pad_connect(int n, void* host_data, psx_padpollfn_t poll_host) {
+struct sio_dev* pad_connect(int n, void* host_data, psx_padpollfn_t poll_host) {
 	n &= 1;
 	pads[n].host.data = host_data;
 	pads[n].host.poll = poll_host;
+	pads[n].config_mode = false;
+	pads[n].analog_mode = false;
+	pads[n].processing_command = false;
+	pads[n].session_active = false;
 	memset(&pads[n].resp, 0, sizeof(pads[n].resp));
-	return &pads[n];
+	return &pads[n].dev;
 }
 
-void pad_reset(struct psx_pad* pad) {
+void pad_reset(struct sio_dev* dev) {
+	struct psx_pad* pad = (struct psx_pad*)dev;
 	pad->session_active = false;
 	memset(&pad->resp, 0, sizeof(pad->resp));
 }
 
-bool pad_send(struct psx_pad* pad, uint8_t byte) {
+bool pad_send(struct sio_dev* dev, uint8_t byte) {
+	struct psx_pad* pad = (struct psx_pad*)dev;
 	if(!pad->session_active) {
 		// prepare our throwaway HiZ response, pull ACK high
 		pad->resp.buf[0] = 0xff;
@@ -73,7 +97,8 @@ ack:
 	return true;
 }
 
-uint8_t pad_recv(struct psx_pad* pad) {
+uint8_t pad_recv(struct sio_dev* dev) {
+	struct psx_pad* pad = (struct psx_pad*)dev;
 	if(pad->resp.off == pad->resp.nbytes) {
 		log_error("PAD: read with no data");
 		pad->session_active = false;
@@ -84,7 +109,8 @@ uint8_t pad_recv(struct psx_pad* pad) {
 	return pad->resp.buf[pad->resp.off++];
 }
 
-bool pad_tx_finished(struct psx_pad* pad) {
+bool pad_tx_finished(struct sio_dev* dev) {
+	struct psx_pad* pad = (struct psx_pad*)dev;
 	return (pad->resp.off == (pad->resp.nbytes - 1));
 }
 

@@ -7,7 +7,11 @@
 #include <stdbool.h>
 
 #define PSX_SPU_MEM_SIZE (512 * 1024)
-#define PSX_SPU_OUTBUF_SIZE 32768
+#define PSX_SPU_OUTBUF_SIZE 16384
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct psx_spu {
 	struct __attribute__((packed)) {
@@ -138,5 +142,9 @@ uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr);
 void psx_spu_write16(struct psx_region* reg, uint32_t addr, uint16_t val);
 uint8_t psx_spu_read8(struct psx_region* reg, uint32_t addr);
 void psx_spu_write8(struct psx_region* reg, uint32_t addr, uint8_t val);
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif // #ifndef PSX_SIO_H
