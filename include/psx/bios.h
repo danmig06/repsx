@@ -15,10 +15,9 @@ extern "C" {
 
 struct psx_bios {
 	uint8_t* rom;
-	struct psx_system* sys;
 };
 
-void psx_bios_load(struct psx_bios* bios, const char* path);
+bool psx_bios_load(struct psx_bios* bios, const char* path);
 
 uint32_t psx_bios_read32(struct psx_region* reg, uint32_t addr);
 void psx_bios_write32(struct psx_region* reg, uint32_t addr, uint32_t val);

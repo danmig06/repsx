@@ -11,18 +11,30 @@
 #define XA_MAX_OUTPUT_SAMPLES (((2016 * 2) * 7 * 2) / 6)
 #define XA_MAX_OUTPUT_SIZE (XA_MAX_OUTPUT_SAMPLES * sizeof(int16_t))
 
-void psx_cdr_init(struct psx_cdrom* cdr) {
-	psx_cdr_reset(cdr);
-}
-
-void psx_cdr_reset(struct psx_cdrom* cdr) {
-	memset(&cdr->regs, 0, sizeof(cdr->regs));
-	cdr->disc = NULL;
+void psx_cdr_init(struct psx_cdrom* cdr, struct psx_system* sys) {
+	cdr->sys = sys;
 	cdr->data_queue  = queue_create(PSX_CDROM_DATABUF_SIZE);
 	cdr->resp_queue  = queue_create(PSX_CDROM_RESPBUF_SIZE);
 	cdr->param_queue = queue_create(PSX_CDROM_PARMBUF_SIZE);
 	cdr->out[0].buf = malloc(XA_MAX_OUTPUT_SIZE);
 	cdr->out[1].buf = &cdr->out[0].buf[XA_MAX_OUTPUT_SAMPLES / 2];
+	cdr->disc = NULL;
+	psx_cdr_reset(cdr);
+}
+
+void psx_cdr_reset(struct psx_cdrom* cdr) {
+	memset(&cdr->regs, 0, sizeof(cdr->regs));
+
+	queue_clear(cdr->data_queue);
+	queue_clear(cdr->resp_queue);
+	queue_clear(cdr->param_queue);
+
+	cdr->ack = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_RESP1, .active = false };
+	cdr->comp = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_RESP2, .active = false };
+	cdr->async_irq = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_IRQ, .active = false };
+	cdr->drive_event.id = PSX_SEV_ID_CDROM_DRIVE;
+
+	memset(cdr->out[0].buf, 0, XA_MAX_OUTPUT_SIZE);
 	cdr->state = 0;
 	cdr->vol_ll = cdr->vol_lr = cdr->vol_rr = cdr->vol_rl = 0;
 	cdr->regs.ctrl = CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
@@ -88,6 +100,19 @@ void cdr_bank1_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 	case 3:
 		// log_debug("CDROM: IRQ acknowledged (%02x)", val);
 		cdr->regs.irq_status &= ~(val & (INT_FLAGS | INT_BFEMPT | INT_BFWRDY));
+		cdr->last_ack_timestamp = cdr->sys->sched->clocks_elapsed;
+		if(cdr->async_irq.active) {
+			psx_sched_remove_ev(cdr->sys->sched, cdr->async_irq.ev.id);
+			psx_sched_add_ev(cdr->sys->sched, &cdr->async_irq.ev);
+		}
+		if(cdr->regs.command != 0) {
+			cdr_run_cmd(cdr);
+		}
+
+		if(val & BIT(6)) {
+			queue_clear(cdr->param_queue);
+			cdr->regs.ctrl |= CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
+		}
 		break;
 	default:
 		break;
@@ -177,22 +202,28 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 	struct psx_cdrom* cdr = reg->peripheral;
 	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 	switch(register_offset) {
-	case 0:
-		// log_trace("CDROM: control register read (%02x)", AS_UINT8(cdr->regs.ctrl));
-		return cdr->regs.ctrl;
+	case 0: {
+		uint8_t ctrl = cdr->regs.ctrl;
+		if(!(cdr->regs.hchp_ctrl & HCHP_BFRD)) {
+			ctrl &= ~CTRL_DATA_REQUEST;
+		}
+
+		// log_debug("CDROM: control register read (%02x)", cdr->regs.ctrl);
+		return ctrl;
+	}
 	case 1:
 		log_debug("CDROM: response read (%02x)", queue_peek(cdr->resp_queue));
 		return cdr_pop_response(cdr);
 	case 2:
-		// log_trace("CDROM: data read (%02x)", queue_peek(cdr->data_queue));
+		// log_debug("CDROM: data read (%02x)", queue_peek(cdr->data_queue));
 		cdr->regs.rd_data = cdr_pop_data(cdr);
 		return cdr->regs.rd_data;
 	case 3:
 		if(CTRL_BANK_GET(cdr->regs.ctrl) & 1) {
-			log_trace("CDROM: IRQ status read (%02x)", cdr->regs.irq_status);
+			// log_debug("CDROM: IRQ status read (%02x)", cdr->regs.irq_status);
 			return cdr->regs.irq_status | 0xe0;
 		} else {
-			// printf("CDROM: IRQ mask read (%02x)", AS_UINT8(cdr->regs.irq_mask));
+			// log_debug("CDROM: IRQ mask read (%02x)", AS_UINT8(cdr->regs.irq_mask));
 			return cdr->regs.irq_mask;
 		}
 		break;

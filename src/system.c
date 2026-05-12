@@ -71,42 +71,22 @@ struct psx_system* psx_system_alloc(void) {
 }
 
 bool psx_system_init(struct psx_system* sys, const char* bios_path) {
+	if(!psx_bios_load(sys->bios, bios_path)) {
+		return false;
+	}
+
 	psx_mem_init(sys->memory);
 	psx_memctl_init(sys->mc);
-	sys->memory->sys = sys;
-
-	psx_bios_load(sys->bios, bios_path);
-	sys->bios->sys = sys;
-
-	psx_sched_init(sys->sched);
-	sys->sched->sys = sys;
-
-	psx_cpu_init(sys->cpu);
-	sys->cpu->sys = sys;
-
-	sys->gpu->sys = sys;
-	psx_gpu_init(sys->gpu);
-
-	sys->timer->sys = sys;
-	psx_tmr_init(sys->timer);
-
-	psx_dmac_init(sys->dmac);
-	sys->dmac->sys = sys;
-
-	psx_cdr_init(sys->cdrom);
-	sys->cdrom->sys = sys;
-
-	psx_irq_init(sys->irq);
-	sys->irq->sys = sys;
-
-	psx_sio_init(sys->sio);
-	sys->sio->sys = sys;
-
-	sys->spu->sys = sys;
-	psx_spu_init(sys->spu);
-
-	sys->mdec->sys = sys;
-	psx_mdec_init(sys->mdec);
+	psx_sched_init(sys->sched, sys);
+	psx_cpu_init(sys->cpu, sys);
+	psx_gpu_init(sys->gpu, sys);
+	psx_tmr_init(sys->timer, sys);
+	psx_dmac_init(sys->dmac, sys);
+	psx_cdr_init(sys->cdrom, sys);
+	psx_irq_init(sys->irq, sys);
+	psx_sio_init(sys->sio, sys);
+	psx_spu_init(sys->spu, sys);
+	psx_mdec_init(sys->mdec, sys);
 
 	#include "hwmap.inc"
 

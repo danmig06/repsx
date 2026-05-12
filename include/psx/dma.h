@@ -48,7 +48,7 @@ struct psx_dmac {
 	struct psx_system* sys;
 };
 
-void psx_dmac_init(struct psx_dmac* dmac);
+void psx_dmac_init(struct psx_dmac* dmac, struct psx_system* sys);
 void psx_dmac_run_transfers(struct psx_dmac* dmac);
 
 uint32_t psx_dmac_read32(struct psx_region* reg, uint32_t addr);

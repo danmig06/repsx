@@ -128,7 +128,7 @@ struct psx_spu {
 	struct psx_system* sys;
 };
 
-void psx_spu_init(struct psx_spu* spu);
+void psx_spu_init(struct psx_spu* spu, struct psx_system* sys);
 void psx_spu_reset(struct psx_spu* spu);
 void psx_spu_direct_in(struct psx_spu* spu, uint32_t word);
 uint32_t psx_spu_direct_out(struct psx_spu* spu);

@@ -162,8 +162,9 @@ static struct psx_sev spu_update_ev = {
 	.trigger = spu_update
 };
 
-void psx_spu_init(struct psx_spu* spu) {
+void psx_spu_init(struct psx_spu* spu, struct psx_system* sys) {
 	psx_spu_reset(spu);
+	spu->sys = sys;
 	spu->mem = malloc(PSX_SPU_MEM_SIZE);
 	spu->out.capacity = PSX_SPU_OUTBUF_SIZE;
 	spu->out.buf = malloc(PSX_SPU_OUTBUF_SIZE * sizeof(*spu->out.buf));

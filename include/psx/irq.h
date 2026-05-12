@@ -32,7 +32,7 @@ struct psx_irq {
 	struct psx_system* sys;
 };
 
-void psx_irq_init(struct psx_irq* irq);
+void psx_irq_init(struct psx_irq* irq, struct psx_system* sys);
 void psx_irq_reset(struct psx_irq* irq);
 void psx_irq_raise(struct psx_irq* irq, enum psx_irq_id id);
 

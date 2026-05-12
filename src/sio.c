@@ -28,7 +28,8 @@ void sio_response_event(struct psx_sched* sched, struct psx_sev* self) {
 	psx_sched_remove_ev(sched, self->id);
 }
 
-void psx_sio_init(struct psx_sio* sio) {
+void psx_sio_init(struct psx_sio* sio, struct psx_system* sys) {
+	sio->sys = sys;
 	psx_sio_reset(sio);
 }
 
@@ -40,23 +41,28 @@ void psx_sio_reset(struct psx_sio* sio) {
 }
 
 static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
-	sio->regs.stat |= STAT_RXREADY;
 	struct sio_dev* dev = NULL;
 	if(device_id >= PSX_SIO_DEV_MEMCARD) {
 		dev = sio->dev.bu[SIO0_PORT(sio)];
-	} else if(device_id == PSX_SIO_DEV_CONTROLLER) {
+		if(!dev) {
+			sio->regs.stat &= ~STAT_DSR;
+			sio->regs.stat |= STAT_RXREADY;
+			return false;
+		}
+	} else {
 		dev = sio->dev.in[SIO0_PORT(sio)];
+		if(!dev || dev->id != device_id) {
+			// the requested device is not connected, the system will try to read the device ID
+			// anyway and the response should just be HiZ
+			sio->regs.stat &= ~STAT_DSR;
+			sio->regs.stat |= STAT_RXREADY;
+			return false;
+		}
 	}
 
-	if(!dev) {
-		// device is not connected, the system will try to read the device ID 
-		// anyway and the response should just be HiZ
-		sio->regs.stat &= ~STAT_DSR;
-		return false;
-	}
 	log_trace("SIO0: selected device 0x%02x", device_id);
-	sio->selected_dev = dev;
 	sio->regs.stat &= ~STAT_RXREADY;
+	sio->selected_dev = dev;
 
 	if(!sio->irq_scheduled) {
 		sio->irq_scheduled = true;

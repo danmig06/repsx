@@ -1,5 +1,5 @@
-#ifndef PSX_INPUT_H
-#define PSX_INPUT_H
+#ifndef PSX_INPUT_COMMON_H
+#define PSX_INPUT_COMMON_H
 
 struct sio_dev {
 	uint8_t id;
@@ -9,4 +9,4 @@ struct sio_dev {
 	bool (*tx_finished)(struct sio_dev*);
 };
 
-#endif // #ifndef PSX_INPUT_H
+#endif // #ifndef PSX_INPUT_COMMON_H

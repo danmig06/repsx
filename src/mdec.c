@@ -34,15 +34,11 @@ static uint8_t g_reverse_zigzag[] = {
     53, 60, 61, 54, 47, 55, 62, 63
 };
 
-void psx_mdec_init(struct psx_mdec* mdec) {
-	memset(mdec->lqtab, 0, sizeof(mdec->lqtab));
-	memset(mdec->cqtab, 0, sizeof(mdec->cqtab));
-	memset(mdec->scale_table, 0, sizeof(mdec->scale_table));
-	memset(&mdec->dec, 0, sizeof(mdec->dec));
-	memset(&mdec->block, 0, sizeof(mdec->block));
-	mdec->mb_data = malloc(INPUT_WORD_SIZE * sizeof(uint32_t));
-	memset(mdec->mb_data, 0, INPUT_WORD_SIZE * sizeof(uint32_t));
-	psx_mdec_reset(mdec);
+void psx_mdec_init(struct psx_mdec* mdec, struct psx_system* sys) {
+	memset(mdec, 0, sizeof(*mdec));
+	mdec->mb_data = calloc(sizeof(uint32_t), INPUT_WORD_SIZE);
+	mdec->regs.stat = 0x80040000;
+	mdec->sys = sys;
 }
 
 void psx_mdec_reset(struct psx_mdec* mdec) {
@@ -276,7 +272,7 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 	switch(cmd_num) {
 	case 0:
 		STAT_NWORDS_SET(mdec->regs.stat, cmd & 0xffff);
-		log_error("MDEC: Nop (setting 0x%x words)", cmd & 0xffff);
+		log_debug("MDEC: Nop (setting 0x%x words)", cmd & 0xffff);
 		break;
 	case 1:
 		mdec->input.dst = (uint32_t*)mdec->mb_data;
@@ -294,7 +290,7 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 		*/
 		break;
 	case 2:
-		log_error("MDEC: Set iqtab (luminance AND color=%d)", cmd & BIT(0));
+		log_debug("MDEC: Set iqtab (luminance AND color=%d)", cmd & BIT(0));
 		mdec->regs.stat &= ~(STAT_IN_FULL | STAT_OUT_EMPTY);
 		mdec->input.dst = (uint32_t*)mdec->iqtab;
 		uint32_t size;
@@ -308,7 +304,7 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 		mdec->input.is_data = false;
 		break;
 	case 3:
-		log_error("MDEC: Set Scale Table");
+		log_debug("MDEC: Set Scale Table");
 		mdec->regs.stat &= ~(STAT_IN_FULL | STAT_OUT_EMPTY);
 		mdec->input.dst = (uint32_t*)mdec->scale_table;
 		mdec->input.size = WORD_SIZE(mdec->scale_table, 64);

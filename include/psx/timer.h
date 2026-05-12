@@ -11,15 +11,14 @@
 extern "C" {
 #endif
 
-struct __attribute__((packed)) psx_ctr  {
-	uint32_t base;
-	uint16_t mode;
-	uint32_t target;
-	uint32_t pad;
-};
 
 struct psx_timer {
-	struct psx_ctr t[3];
+	struct {
+		uint32_t base;
+		uint16_t mode;
+		uint32_t target;
+		uint32_t pad;
+	} t[3];
 
 	struct {
 		uint32_t rate;
@@ -30,7 +29,7 @@ struct psx_timer {
 	struct psx_system* sys;
 };
 
-void psx_tmr_init(struct psx_timer* tmr);
+void psx_tmr_init(struct psx_timer* tmr, struct psx_system* sys);
 // vblank/hblank tick events
 void psx_tmr_hsync(struct psx_timer* tmr); 
 void psx_tmr_vsync(struct psx_timer* tmr); 

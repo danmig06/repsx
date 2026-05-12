@@ -61,7 +61,7 @@ struct psx_mdec {
 	struct psx_system* sys;
 };
 
-void psx_mdec_init(struct psx_mdec* mdec);
+void psx_mdec_init(struct psx_mdec* mdec, struct psx_system* sys);
 void psx_mdec_reset(struct psx_mdec* mdec);
 void psx_mdec_direct_in(struct psx_mdec* mdec, uint32_t word);
 uint32_t psx_mdec_direct_out(struct psx_mdec* mdec);

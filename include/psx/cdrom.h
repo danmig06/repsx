@@ -3,6 +3,7 @@
 
 #include <psx/system.h>
 #include <psx/memory.h>
+#include <psx/sched.h>
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -14,6 +15,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct __psx_cdr_event {
+	struct psx_sev ev;
+	uint8_t response[PSX_CDROM_RESPBUF_SIZE];
+	uint8_t resp_size;
+	uint8_t ival;
+	bool active;
+};
 
 struct psx_cdrom {
 	struct {
@@ -40,6 +49,9 @@ struct psx_cdrom {
 		uint32_t loc;
 		bool is_pending;
 	} seek;
+	struct __psx_cdr_event ack, comp, async_irq;
+	struct psx_sev drive_event;
+	uint64_t last_ack_timestamp;
 	struct {
 		uint8_t file;
 		uint8_t channel;
@@ -68,7 +80,7 @@ typedef struct {
 	int16_t l, r;
 } psx_cdr_sample_t;
 
-void psx_cdr_init(struct psx_cdrom* cdr);
+void psx_cdr_init(struct psx_cdrom* cdr, struct psx_system* sys);
 void psx_cdr_reset(struct psx_cdrom* cdr);
 psx_cdr_sample_t psx_cdr_pop_sample(struct psx_cdrom* cdr);
 void psx_cdr_tray_open(struct psx_cdrom* cdr);

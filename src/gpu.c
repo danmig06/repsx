@@ -106,8 +106,9 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 	psx_sched_add_ev(sched, &vblank_event);
 }
 
-void psx_gpu_init(struct psx_gpu* gpu) {
+void psx_gpu_init(struct psx_gpu* gpu, struct psx_system* sys) {
 	psx_gpu_reset(gpu);
+	gpu->sys = sys;
 	// setup hblank/vblank event loop
 	psx_sched_add_ev(gpu->sys->sched, &hblank_event);
 	psx_sched_add_ev(gpu->sys->sched, &vblank_event);

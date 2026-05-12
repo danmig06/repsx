@@ -169,7 +169,7 @@ struct psx_cpu {
 	struct psx_system* sys;
 };
 
-void psx_cpu_init(struct psx_cpu* cpu);
+void psx_cpu_init(struct psx_cpu* cpu, struct psx_system* sys);
 void psx_cpu_reset(struct psx_cpu* cpu);
 void psx_cpu_register_irq(struct psx_cpu* cpu);
 void psx_cpu_clear_irq(struct psx_cpu* cpu);

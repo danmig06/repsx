@@ -170,7 +170,7 @@ struct psx_gpu {
 	struct psx_system* sys;
 };
 
-void psx_gpu_init(struct psx_gpu* gpu);
+void psx_gpu_init(struct psx_gpu* gpu, struct psx_system* sys);
 void psx_gpu_reset(struct psx_gpu* gpu);
 uint32_t psx_gpu_direct_out(struct psx_gpu* gpu);
 void psx_gpu_direct_in(struct psx_gpu* gpu, uint32_t word);

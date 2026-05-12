@@ -34,7 +34,7 @@ struct psx_sio {
 	struct psx_system* sys;
 };
 
-void psx_sio_init(struct psx_sio* sio);
+void psx_sio_init(struct psx_sio* sio, struct psx_system* sys);
 void psx_sio_reset(struct psx_sio* sio);
 
 uint32_t psx_sio_read32(struct psx_region* reg, uint32_t addr);

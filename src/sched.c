@@ -1,8 +1,9 @@
 #include <psx/sched.h>
 
-void psx_sched_init(struct psx_sched* sched) {
+void psx_sched_init(struct psx_sched* sched, struct psx_system* sys) {
 	sched->clocks_elapsed = 0;
 	sched->ev_list = NULL;
+	sched->sys = sys;
 }
 
 void psx_sched_add_ev(struct psx_sched* sched, struct psx_sev* ev) {

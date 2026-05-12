@@ -109,10 +109,10 @@ static void prepare_load(struct psx_cpu* cpu, unsigned target_reg, uint32_t valu
 	cpu->load_slot.value = value;
 }
 
-void enter_exception(struct psx_cpu* cpu, uint32_t cause) {
+void enter_exception(struct psx_cpu* cpu, uint32_t exc) {
 	uint32_t handler = (cpu->cop0_regs.sr & SR_BEV) ? 0xbfc00180 : 0x80000080;
 
-	cpu->cop0_regs.cause = cause << 2;
+	CAUSE_EXC_SET(cpu->cop0_regs.cause, exc);
 	cpu->cop0_regs.epc = cpu->saved_pc;
 
 	if(cpu->branch_delay) {
@@ -122,7 +122,11 @@ void enter_exception(struct psx_cpu* cpu, uint32_t cause) {
 		// set the BT flag
 		if(cpu->branch_taken) {
 			cpu->cop0_regs.cause |= CAUSE_BT;
+		} else {
+			cpu->cop0_regs.cause &= ~CAUSE_BT;
 		}
+	} else {
+		cpu->cop0_regs.cause &= ~(CAUSE_BD | CAUSE_BT);
 	}
 
 	// "push" next interrupt mode in the SR

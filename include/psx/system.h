@@ -84,7 +84,6 @@ void psx_system_signal(struct psx_system* sys, int sig);
 void psx_system_set_disc(struct psx_system* sys, struct psx_disc* disc);
 
 void psx_system_update(struct psx_system* sys);
-void psx_system_start(struct psx_system* sys);
 
 #ifdef __cplusplus
 };

@@ -17,6 +17,8 @@ enum {
 	PSX_SEV_ID_DMAEND,
 	PSX_SEV_ID_CDROM_RESP1,
 	PSX_SEV_ID_CDROM_RESP2,
+	PSX_SEV_ID_CDROM_IRQ,
+	PSX_SEV_ID_CDROM_DRIVE,
 	PSX_SEV_ID_SIO_RESPONSE,
 	PSX_SEV_ID_SPU_UPDATE
 };
@@ -36,11 +38,11 @@ struct psx_sev {
 
 struct psx_sched {
 	uint64_t clocks_elapsed;
-	struct psx_system* sys;
 	struct psx_sev* ev_list;
+	struct psx_system* sys;
 };
 
-void psx_sched_init(struct psx_sched* sched);
+void psx_sched_init(struct psx_sched* sched, struct psx_system* sys);
 void psx_sched_add_ev(struct psx_sched* sched, struct psx_sev* ev);
 void psx_sched_remove_ev(struct psx_sched* sched, uint8_t id);
 void psx_sched_update(struct psx_sched* sched, uint32_t clocks);

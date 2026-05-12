@@ -5,8 +5,9 @@
 
 #include <string.h>
 
-void psx_irq_init(struct psx_irq* irq) {
+void psx_irq_init(struct psx_irq* irq, struct psx_system* sys) {
 	psx_irq_reset(irq);
+	irq->sys = sys;
 }
 
 void psx_irq_reset(struct psx_irq* irq) {
@@ -104,6 +105,8 @@ void psx_irq_raise(struct psx_irq* irq, enum psx_irq_id id) {
 
 	if(irq->stat & irq->mask) {
 		psx_cpu_register_irq(irq->sys->cpu);
+	} else {
+		psx_cpu_clear_irq(irq->sys->cpu);
 	}
 }
 

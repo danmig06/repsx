@@ -113,7 +113,7 @@ static void update_write(struct psx_bu* bu, uint8_t val) {
 		bu->response = 0x5d;
 		break;
 	case BU_STATE_W_END:
-		log_error("BU: write complete (addr=0x%04x)", bu->address);
+		log_info("BU: write complete (addr=0x%04x)", bu->address);
 		if(bu->host.write_sector) {
 			// could allow read-only memorycards in the API? maybe store the current file in memory?
 			bu->host.write_sector(bu->host.data, bu->address, bu->sector.data);
@@ -166,7 +166,7 @@ static void update_read(struct psx_bu* bu, uint8_t val) {
 		bu->response = bu->sector.checksum;
 		break;
 	case BU_STATE_R_END:
-		log_error("BU: read complete (addr=0x%04x)", bu->address);
+		log_info("BU: read complete (addr=0x%04x)", bu->address);
 		// reads always return success
 		bu->session_active = false;
 		bu->response = BU_SUCCESS;
@@ -251,7 +251,7 @@ struct sio_dev* bu_connect(int n, void* host_data, psx_buwritefn_t write_fn, psx
 void bu_reset(struct sio_dev* dev) {
 	struct psx_bu* bu = (struct psx_bu*)dev;
 	if(bu->current_command != 0 && bu->command_state != 0) {
-		log_warn("BU: reset");
+		log_debug("BU: reset");
 	}
 	bu->session_active = false;
 	bu->processing_command = false;

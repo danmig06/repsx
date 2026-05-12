@@ -15,7 +15,8 @@
 
 #define HOOK_KCALLS
 
-void psx_cpu_init(struct psx_cpu* cpu) {
+void psx_cpu_init(struct psx_cpu* cpu, struct psx_system* sys) {
+	cpu->sys = sys;
 	psx_cpu_reset(cpu);
 }
 
@@ -143,7 +144,7 @@ void psx_cpu_clear_irq(struct psx_cpu* cpu) {
 }
 
 static inline bool cpu_check_irqs(struct psx_cpu* cpu) {
-	return (cpu->cop0_regs.sr & SR_IE) && ((SR_IMASK_GET(cpu->cop0_regs.sr) >> 2) & CAUSE_IP_GET(cpu->cop0_regs.cause));
+	return (cpu->cop0_regs.sr & SR_IE) && ((cpu->cop0_regs.sr & SR_IMASK) & (cpu->cop0_regs.cause & (CAUSE_IP | CAUSE_SWI)));
 }
 
 void psx_cpu_fetch_execute(struct psx_cpu* cpu) {

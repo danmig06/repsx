@@ -86,15 +86,16 @@ static void dma_complete_evcb(struct psx_sched* sched, struct psx_sev* self) {
 
 #endif
 
-void psx_dmac_init(struct psx_dmac* dmac) {
+void psx_dmac_init(struct psx_dmac* dmac, struct psx_system* sys) {
 	memset(dmac, 0, sizeof(*dmac));
 	dmac->regs.dpcr = 0x07654321;
 	DICR_CHNFLAGS_SET(dmac->regs.dicr, 1);
+	dmac->sys = sys;
 }
 
 uint32_t psx_dmac_read32(struct psx_region* reg, uint32_t addr) {
 	uint32_t val = 0;
-	uint32_t register_offset = addr - reg->start;
+	uint32_t register_offset = PSX_MEM_REAL_ADDR(addr) - reg->start;
 
 	uint8_t* regs = reg->peripheral;
 	memcpy(&val, &regs[register_offset], sizeof(val));
@@ -319,14 +320,13 @@ static void do_dev_linked_list(struct psx_dmac* dmac, enum dmachnidx_t channel, 
 
 		items_left = list_header >> 24;
 		*current_delay += (items_left + ((items_left + 15) / 16)) + LL_HEADER_SETUP_DELAY;
+
 		if(items_left > 0) {
 			*current_delay += LL_PACKET_SETUP_DELAY;
-		}
-
-		while(items_left > 0) {
-			addr = (addr + 4) & 0x1ffffc;
-			psx_gpu_direct_in(gpu, READ_WORD(mem, addr));
-			items_left--;
+			while(items_left--) {
+				addr = (addr + 4) & 0x1ffffc;
+				psx_gpu_direct_in(gpu, READ_WORD(mem, addr));
+			}
 		}
 
 		if(list_header & 0x800000) {

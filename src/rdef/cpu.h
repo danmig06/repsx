@@ -28,6 +28,10 @@ enum {
 #define CAUSE_EXC_SET(o, v) SET_BITS(o, v, CAUSE_EXC, 2)
 #define CAUSE_EXC_GET(o) GET_BITS(o, CAUSE_EXC, 2)
 
+	CAUSE_SWI = BIT_RANGE(8, 2),
+#define CAUSE_SWI_SET(o, v) SET_BITS(o, v, CAUSE_SWI, 8)
+#define CAUSE_SWI_GET(o) GET_BITS(o, CAUSE_SWI, 8)
+
 	CAUSE_IP = BIT_RANGE(10, 6),
 #define CAUSE_IP_SET(o, v) SET_BITS(o, v, CAUSE_IP, 10)
 #define CAUSE_IP_GET(o) GET_BITS(o, CAUSE_IP, 10)

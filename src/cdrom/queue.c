@@ -60,7 +60,7 @@ uint32_t queue_items(struct queue* q) {
 }
 
 bool queue_full(struct queue* q) {
-	return q->read_off == q->size;
+	return q->write_off == q->size;
 }
 
 bool queue_empty(struct queue* q) {

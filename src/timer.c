@@ -1,13 +1,21 @@
 #include <psx/timer.h>
 #include <psx/irq.h>
+#include <psx/cpu.h>
 #include <psx/gpu.h>
 #include <psx/sched.h>
 
-#include <string.h>
-#include <limits.h>
-
 #include "util.h"
 #include "rdef/timer.h"
+
+#include <string.h>
+
+// This controls a hack for Parasite Eve 2, it may break some games.
+// the CPU is running at 2 Clocks Per Instruction, however, there is a point in PE2's code
+// which runs some kind of texture decoding algorithm and times it using timer2 (running at 1/8 clock rate),
+// at 2 CPI, the CPU simply takes too long to decode the data, leading to infinite retries,
+// we can try to unscale the timer2 value to prevent this timeout, which won't really solve the problem at its root,
+// the game might be relying on the icache to speed up the code, so implementing that might solve the issue.
+#define PE2_HACK 1
 
 #define CHECK_TARGET(tmr, i, ts) do { \
 		if((ts - tmr->tstatus[i].start_ts) >= tmr->tstatus[i].end_ts) { \
@@ -92,9 +100,9 @@ static void setcount(struct psx_timer* tmr, uint32_t i, uint32_t val) {
 	}
 }
 
-void psx_tmr_init(struct psx_timer* tmr) {
-	memset(tmr->t, 0, sizeof(tmr->t));
-	memset(tmr->tstatus, 0, sizeof(tmr->tstatus));
+void psx_tmr_init(struct psx_timer* tmr, struct psx_system* sys) {
+	memset(tmr, 0, sizeof(*tmr));
+	tmr->sys = sys;
 	tmr->tstatus[0].rate = 1;
 	tmr->tstatus[1].rate = 1;
 	tmr->tstatus[2].rate = 1;
@@ -252,12 +260,21 @@ static uint32_t tmr_read(struct psx_timer* tmr, uint32_t off) {
 	case 0:
 		tmr_update(tmr);
 		int sync_mode = MODE_SYNC_GET(tmr->t[idx].mode);
-		if(idx == 2 && (tmr->t[idx].mode & MODE_SYNC_EN) && (sync_mode == 0 || sync_mode == 3)) {
-			val = tmr->t[idx].base;
+		if(idx == 2) {
+			if((tmr->t[idx].mode & MODE_SYNC_EN) && (sync_mode == 0 || sync_mode == 3)) {
+				val = tmr->t[idx].base;
+			} else {
+				val = getcount(tmr, idx);
+#if PE2_HACK
+				if(tmr->tstatus[idx].count_to_target && (tmr->t[idx].mode & 0x2ff) == 0x248) {
+					val /= PSX_CPU_CPI;
+				}
+#endif
+			}
 		} else {
 			val = getcount(tmr, idx);
 		}
-		// printf("timer%d read value -> 0x%08x\n", idx, val);
+		// log_debug("timer%d read value -> 0x%08x", idx, val);
 		val &= 0xffff;
 		break;
 	case 4:
