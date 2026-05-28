@@ -19,7 +19,7 @@ enum {
 	PSX_DMA_DIR_FROM_RAM = 1
 };
 
-typedef struct __attribute__((packed)) __psx_dma_channel {
+typedef struct __psx_dma_channel {
 	uint32_t start_addr;
 	struct {
 		union {
@@ -33,7 +33,7 @@ typedef struct __attribute__((packed)) __psx_dma_channel {
 } psx_dma_channel_t;
 
 struct psx_dmac {
-	struct __attribute__((packed)) {
+	struct {
 		psx_dma_channel_t chn[7];
 		uint32_t dpcr;
 		uint32_t dicr;

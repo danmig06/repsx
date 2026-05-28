@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 struct psx_spu {
-	struct __attribute__((packed)) {
+	struct {
 		struct {
 			 int16_t lvolume;
 			 int16_t rvolume;

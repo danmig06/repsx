@@ -17,30 +17,15 @@
 #define AS_UINT16(s) (*(uint16_t*)(&(s)))
 #define AS_UINT8(s) (*(uint8_t*)(&(s)))
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
-#define BIT(n) (1 << (n))
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#define ABS(n) (((n) >= 0) ? (n) : -(n))
 #define SAT(v, a, b) (((v) < (a)) ? (a) : (((v) > (b)) ? (b) : (v)))
+
+#define BIT(n) (1 << (n))
 #define BIT_RANGE(s, n) ((BIT(n) - 1) << (s))
 #define SET_BITS(o, v, msk, s) o = (o & ~(msk)) | (((v) << (s)) & (msk))
 #define GET_BITS(o, msk, s) (((o) & (msk)) >> (s))
 
-#define BE16(h) \
-	do { \
-		if(!psx_is_host_be()) { \
-			psx_be16(h); \
-		} \
-	} while(0)
-
-#define BE32(w) \
-	do { \
-		if(!psx_is_host_be()) { \
-			psx_be32(w); \
-		} \
-	} while(0)
-
-bool psx_is_host_be(void);
-uint16_t psx_be16(uint16_t h);
-uint32_t psx_be32(uint32_t w);
-
 #endif // #ifndef PSX_UTIL_H
+

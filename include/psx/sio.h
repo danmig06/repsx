@@ -17,11 +17,12 @@ enum {
 };
 
 struct psx_sio {
-	struct __attribute__((packed)) {
+	struct {
 		uint32_t rx_data;
 		uint32_t stat;
 		uint16_t mode;
-		uint32_t ctrl;
+		uint16_t ctrl;
+		uint16_t padding;
 		uint16_t baudrate_counter;
 	} regs;
 	bool irq_scheduled;

@@ -43,6 +43,7 @@ struct psx_mdec {
 	} input;
 	struct {
 		uint32_t offset;
+		bool finished;
 		// uint8_t buf[16 * 16 * 3]; // PSX_MDEC_MB_SIZE * PSX_MDEC_MB_BUFFER_SIZE
 		uint8_t buf[PSX_MDEC_MB_SIZE * PSX_MDEC_MB_BUFFER_SIZE];
 	} dec;

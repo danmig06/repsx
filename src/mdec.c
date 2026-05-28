@@ -1,4 +1,5 @@
 #include <psx/mdec.h>
+#include <psx/sched.h>
 
 #include "rdef/mdec.h"
 #include "util.h"
@@ -24,14 +25,14 @@ enum {
 };
 
 static uint8_t g_reverse_zigzag[] = {
-     0,  1,  8, 16,  9,  2,  3, 10,
-    17, 24, 32, 25, 18, 11,  4,  5,
-    12, 19, 26, 33, 40, 48, 41, 34,
-    27, 20, 13,  6,  7, 14, 21, 28,
-    35, 42, 49, 56, 57, 50, 43, 36,
-    29, 22, 15, 23, 30, 37, 44, 51,
-    58, 59, 52, 45, 38, 31, 39, 46,
-    53, 60, 61, 54, 47, 55, 62, 63
+	0,  1,  8,  16,  9,  2,  3, 10,
+	17, 24, 32, 25, 18, 11,  4,  5,
+	12, 19, 26, 33, 40, 48, 41, 34,
+	27, 20, 13,  6,  7, 14, 21, 28,
+	35, 42, 49, 56, 57, 50, 43, 36,
+	29, 22, 15, 23, 30, 37, 44, 51,
+	58, 59, 52, 45, 38, 31, 39, 46,
+	53, 60, 61, 54, 47, 55, 62, 63
 };
 
 void psx_mdec_init(struct psx_mdec* mdec, struct psx_system* sys) {
@@ -123,10 +124,15 @@ static void rl_decode_block(struct psx_mdec* mdec, int16_t* blk, uint8_t* qt) {
 	}
 
 	uint16_t n = mdec->mb_data[mdec->dec.offset++];
-	while(n == PSX_MDEC_EOB) {
+	uint32_t input_halfwords = mdec->input.size * 2;
+	while(mdec->dec.offset < input_halfwords && n == PSX_MDEC_EOB) {
 		n = mdec->mb_data[mdec->dec.offset++];
 	}
 
+	if(mdec->dec.offset == input_halfwords) {
+		mdec->dec.finished = true;
+		return;
+	}
 	int q_scale = (n >> 10) & 0x3f;
 	int16_t val = SE10(n & 0x3ff) * qt[k];
 
@@ -147,6 +153,10 @@ static void rl_decode_block(struct psx_mdec* mdec, int16_t* blk, uint8_t* qt) {
 			break;
 		}
 		mdec->dec.offset++;
+		if(mdec->dec.offset == input_halfwords) {
+			mdec->dec.finished = true;
+			break;
+		}
 		k += ((n >> 10) & 0x3f) + 1;
 		val = (SE10(n & 0x3ff) * qt[k] * q_scale + 4) / 8;
 	}
@@ -154,17 +164,19 @@ static void rl_decode_block(struct psx_mdec* mdec, int16_t* blk, uint8_t* qt) {
 	mdec_idct(mdec, blk);
 }
 
-static void mdec_decode_block(struct psx_mdec* mdec) {
+static void mdec_decode_blocks(struct psx_mdec* mdec) {
 	mdec->block.n_available = 0;
+	mdec->block.index = 0;
 	if(mdec->block.is_monochrome) {
 		bool is_signed = (mdec->regs.stat & STAT_OUTSIGN) != 0;
 		int16_t y;
 		for(int i = 0; i < PSX_MDEC_MB_BUFFER_SIZE; i++) {
+			if(mdec->dec.finished) break;
 			rl_decode_block(mdec, mdec->block.y, mdec->lqtab);
 			// y_to_mono
 			for(int k = 0; k < 64; k++) {
-				y = mdec->block.y[k];
-				y = SAT(y & 0x1ff, -128, 127);
+				y = mdec->block.y[k] & 0x1ff;
+				y = SAT(y, -128, 127);
 				if(!is_signed) {
 					y ^= 0x80;
 				}
@@ -175,9 +187,7 @@ static void mdec_decode_block(struct psx_mdec* mdec) {
 	} else {
 		uint8_t* out_buf;
 		for(int i = 0; i < PSX_MDEC_MB_BUFFER_SIZE; i++) {
-			if(mdec->dec.offset >= INPUT_WORD_SIZE) {
-				break;
-			}
+			if(mdec->dec.finished) break;
 			out_buf = &mdec->dec.buf[i * PSX_MDEC_MB_SIZE];
 			rl_decode_block(mdec, mdec->block.cr, mdec->cqtab);
 			rl_decode_block(mdec, mdec->block.cb, mdec->cqtab);
@@ -192,23 +202,18 @@ static void mdec_decode_block(struct psx_mdec* mdec) {
 			mdec->block.n_available++;
 		}
 	}
-	mdec->block.index = 0;
-	/*
-	log_error("MDEC: Finished decoding %u-bit data input=(0x%04x -> 0x%04x remaining, %d halfwords consumed)",
-	     (STAT_OUTDEPTH_GET(mdec->regs.stat) == 3) ? 15 : 24,
-	     mdec->input.size,
-	     mdec->input.size - mdec->dec.offset,
-	     mdec->dec.offset - prev_offset
-	);
-	*/
 }
 
-static uint32_t mdec_read_block(struct psx_mdec* mdec) {
+static inline uint32_t mdec_read_block(struct psx_mdec* mdec) {
 	if(mdec->block.offset == mdec->block.size) {
+		bool end_of_buffer = mdec->block.index == mdec->block.n_available - 1;
+		if(end_of_buffer && mdec->dec.finished) {
+			return 0xaaaaaaaa;
+		}
 		mdec->block.offset = 0;
 		mdec->block.index++;
-		if(mdec->block.index == mdec->block.n_available) {
-			mdec_decode_block(mdec);
+		if(end_of_buffer) {
+			mdec_decode_blocks(mdec);
 		}
 	}
 	size_t read_offset = (mdec->block.index * PSX_MDEC_MB_SIZE) + mdec->block.offset;
@@ -224,8 +229,7 @@ void psx_mdec_direct_in(struct psx_mdec* mdec, uint32_t word) {
 		return;
 	}
 	*/
-	mdec->input.dst[mdec->input.offset] = word;
-	mdec->input.offset++;
+	mdec->input.dst[mdec->input.offset++] = word;
 	if(mdec->input.is_data) {
 		uint16_t words_left = STAT_NWORDS_GET(mdec->regs.stat);
 		STAT_NWORDS_SET(mdec->regs.stat, words_left - 1);
@@ -233,9 +237,9 @@ void psx_mdec_direct_in(struct psx_mdec* mdec, uint32_t word) {
 
 	if(mdec->input.offset == mdec->input.size) {
 		mdec->receiving_data = false;
+		mdec->input.dst = NULL;
+		mdec->regs.stat |= STAT_IN_FULL;
 		if(mdec->input.is_data) {
-			// log_error("MDEC: macroblock upload finished (0x%x words received)", mdec->input.size);
-			mdec->input.dst = NULL;
 			mdec->block.index = 0;
 			mdec->block.n_available = 0;
 			mdec->block.offset = 0;
@@ -248,22 +252,18 @@ void psx_mdec_direct_in(struct psx_mdec* mdec, uint32_t word) {
 				STAT_CURBLK_SET(mdec->regs.stat, BLOCK_TYPE_Y1);
 			}
 			mdec->dec.offset = 0;
-			mdec_decode_block(mdec);
+			mdec->dec.finished = false;
+			mdec_decode_blocks(mdec);
 			mdec->regs.stat &= ~STAT_OUT_EMPTY;
-		}
-		mdec->regs.stat |= STAT_IN_FULL;
-		mdec->regs.stat &= ~(STAT_BUSY | STAT_DATA_IN_REQ);
-		if(mdec->regs.ctrl & CTRL_DATA_OUT_EN) {
 			mdec->regs.stat |= STAT_DATA_OUT_REQ;
 		}
+		// TODO: unsetting the BUSY flag here is technically not correct, but that only causes syncing issues in FF9,
+		// unsetting it later when the output fifo gets emptied breaks stuff in other games, but fixes FF9, so need to figure out if there's a bug
+		mdec->regs.stat &= ~(STAT_BUSY | STAT_DATA_IN_REQ);
 	}
 }
 
 uint32_t psx_mdec_direct_out(struct psx_mdec* mdec) {
-	if(mdec->dec.offset >= INPUT_WORD_SIZE) {
-		log_error("MDEC: input buffer overrun");
-		return 0xaaaaaaaa;
-	}
 	return mdec_read_block(mdec);
 }
 
@@ -282,12 +282,6 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 		mdec->input.is_data = true;
 		mdec->regs.stat &= ~STAT_IN_FULL;
 		mdec->regs.stat |= STAT_OUT_EMPTY;
-
-		/*
-		char* mb = (cmd & BIT(25)) ? "Mask ON," : "Mask OFF,";
-		char* sign = (cmd & BIT(26)) ? "Signed," : "Unsigned,";
-		log_error("MDEC: Decode Macroblock %s %s Depth=%d, 0x%x words", mb, sign, (cmd >> 27) & 3, cmd & 0xffff);
-		*/
 		break;
 	case 2:
 		log_debug("MDEC: Set iqtab (luminance AND color=%d)", cmd & BIT(0));
@@ -318,10 +312,7 @@ void mdec_do_cmd(struct psx_mdec* mdec, uint32_t cmd) {
 	// all valid commands copy bits 25-28 to stat bits 23-26
 	mdec->regs.stat &= ~(STAT_OUTMASK | STAT_OUTSIGN | STAT_OUTDEPTH);
 	mdec->regs.stat |= (cmd >> 2) & (STAT_OUTMASK | STAT_OUTSIGN | STAT_OUTDEPTH);
-	mdec->regs.stat |= STAT_BUSY;
-	if(mdec->regs.ctrl & CTRL_DATA_IN_EN) {
-		mdec->regs.stat |= STAT_DATA_IN_REQ;
-	}
+	mdec->regs.stat |= STAT_BUSY | STAT_DATA_IN_REQ;
 	mdec->regs.command = cmd_num;
 	mdec->input.offset = 0;
 }
@@ -333,7 +324,8 @@ uint32_t psx_mdec_read32(struct psx_region* reg, uint32_t addr) {
 		// return pending data
 		return mdec_read_block(mdec);
 	} else if(register_offset == 4) {
-		return mdec->regs.stat;
+		uint32_t dma_mask = (mdec->regs.ctrl & (CTRL_DATA_IN_EN | CTRL_DATA_OUT_EN)) >> 2;
+		return (mdec->regs.stat & dma_mask) | (mdec->regs.stat & ~dma_mask);
 	}
 
 	return 0;

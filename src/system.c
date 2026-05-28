@@ -130,39 +130,34 @@ void psx_system_signal(struct psx_system* sys, int sig) {
 		break;
 	case PSX_SIG_TRAY_CLOSED:
 		sys->cdrom->shell_open = false;
+		sys->cdrom->state = 0x02;
 		break;
 	}
 }
 
 void psx_system_set_disc(struct psx_system* sys, struct psx_disc* disc) {
+	struct psx_cdrom* cdr = sys->cdrom;
 	if(disc) {
-		psx_disc_verify(disc);
+		if(!disc->tracks || disc->n_tracks == 0 || disc->n_tracks > 99) {
+			log_error("SYSTEM: invalid disc inserted");
+			return;
+		}
+		cdr->current_track.idx = 0;
+		cdr->current_track.start = disc->tracks[0].abs_start;
+		cdr->current_track.end = disc->tracks[0].abs_end;
+		cdr->current_track.is_audio = disc->tracks[0].is_audio;
+		cdr->disc_type = psx_disc_verify(disc);
 	}
-	sys->cdrom->disc = disc;
+	cdr->disc = disc;
 }
 
 void psx_system_update(struct psx_system* sys) {
 	psx_cpu_fetch_execute(sys->cpu);
-
-	/*
-	if(sys->cpu->regs.pc == 0x800507d4) {
-		int w = *(uint16_t*)(&sys->memory->phys[(sys->cpu->regs.a0 + 4) & 0x1fffff]);
-		int h = *(uint16_t*)(&sys->memory->phys[(sys->cpu->regs.a0 + 6) & 0x1fffff]);
-		fprintf(stderr, "FinalizeGPUStore(cmd_chain_halfwords=0x%08x, dstbuf=0x%08x) w=%d, h=%d\n", sys->cpu->regs.a0, sys->cpu->regs.a1, w, h);
-	}
-	*/
-
 	psx_sched_update(sys->sched, sys->cpu->clocks);
 	
 	if(sys->current_exe && sys->cpu->next_pc == 0x80030000) {
-		fprintf(stderr, "exe loaded\n");
+		log_info("SYSTEM: exe loaded");
 		psx_exe_load(sys->current_exe, sys);
-	}
-}
-
-void psx_system_start(struct psx_system* sys) {
-	while(1) {
-		psx_system_update(sys);
 	}
 }
 

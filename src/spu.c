@@ -614,11 +614,11 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 
 	int16_t* cd_left_cap  = spu_get_capture_ptr(spu, CAP_CD_LEFT);
 	int16_t* cd_right_cap = spu_get_capture_ptr(spu, CAP_CD_RIGHT);
+	psx_cdr_sample_t cd = psx_cdr_pop_sample(spu->sys->cdrom);
+	*cd_left_cap  = cd.l;
+	*cd_right_cap = cd.r;
 	if(spu->regs.spucnt & CNT_CD_EN) {
 		int32_t cd_vol = spu->regs.cdin_vol;
-		psx_cdr_sample_t cd = psx_cdr_pop_sample(spu->sys->cdrom);
-		*cd_left_cap  = cd.l;
-		*cd_right_cap = cd.r;
 		cd.l = vmult(cd.l, cd_vol & 0xffff);
 		cd.r = vmult(cd.r, cd_vol >> 16);
 		left  += cd.l;
@@ -627,8 +627,6 @@ static void spu_update(struct psx_sched* sched, struct psx_sev* self) {
 			revbl += cd.l;
 			revbr += cd.r;
 		}
-	} else {
-		*cd_left_cap = *cd_right_cap = 0;
 	}
 
 	if(!spu->revb_signal) {

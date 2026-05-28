@@ -10,7 +10,6 @@
 #include <string.h>
 #define GPU_VER 1
 #define SE11(v) ((int16_t)((v) << 5) >> 5)
-#define ABS(n) ((n >= 0) ? (n) : -(n))
 
 #define gpu_render_poly(gpu, sh, ...) gpu->renderer.poly(&gpu->renderer, sh, &(struct psx_render_args){ __VA_ARGS__ })
 #define gpu_render_rect(gpu, textured, ...) gpu->renderer.rect(&gpu->renderer, textured, &(struct psx_render_args){ __VA_ARGS__ })

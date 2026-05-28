@@ -39,15 +39,25 @@ struct psx_cdrom {
 
 	uint8_t vol_ll, vol_lr, vol_rr, vol_rl;
 	uint8_t state;
+	uint8_t next_track;
 	uint8_t disc_mode;
+	psx_disc_type_t disc_type;
+	bool muted;
 	bool shell_open;
+	struct {
+		uint8_t idx;
+		psx_lba_t start;
+		psx_lba_t end;
+		bool is_audio;
+	} current_track;
 	struct queue* data_queue;
 	struct queue* resp_queue;
 	struct queue* param_queue;
-	uint32_t loc;
+	psx_lba_t loc;
 	struct {
-		uint32_t loc;
+		psx_lba_t loc;
 		bool is_pending;
+		uint8_t type;
 	} seek;
 	struct __psx_cdr_event ack, comp, async_irq;
 	struct psx_sev drive_event;
@@ -68,9 +78,6 @@ struct psx_cdrom {
 		uint32_t write_off;
 		int16_t* buf;
 	} out[2];
-
-	bool muted;
-	bool report_absolute;
 
 	struct psx_disc* disc;
 	struct psx_system* sys;

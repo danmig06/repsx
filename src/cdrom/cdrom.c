@@ -33,13 +33,18 @@ void psx_cdr_reset(struct psx_cdrom* cdr) {
 	cdr->comp = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_RESP2, .active = false };
 	cdr->async_irq = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_IRQ, .active = false };
 	cdr->drive_event.id = PSX_SEV_ID_CDROM_DRIVE;
+	cdr->last_ack_timestamp = 0;
 
 	memset(cdr->out[0].buf, 0, XA_MAX_OUTPUT_SIZE);
-	cdr->state = 0;
-	cdr->vol_ll = cdr->vol_lr = cdr->vol_rr = cdr->vol_rl = 0;
+	cdr->state = 0x00;
+	cdr->disc_mode = 0x00;
+	cdr->vol_ll = cdr->vol_rr = 0x80;
+	cdr->vol_lr = cdr->vol_rl = 0x00;
 	cdr->regs.ctrl = CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
 	cdr->loc = 150;
-	cdr->report_absolute = false;
+	cdr->seek.is_pending = false;
+	cdr->muted = false;
+	cdr->shell_open = false;
 }
 
 static void cdr_push_param(struct psx_cdrom* cdr, uint8_t pb) {
@@ -165,16 +170,23 @@ void cdr_bank3_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 psx_cdr_sample_t psx_cdr_pop_sample(struct psx_cdrom* cdr) {
 	psx_cdr_sample_t s = { 0 };
 	int32_t left = 0, right = 0;
+	bool src_muted = false;
 
 	if(cdr->out[0].read_off < cdr->out[0].write_off) {
-		if(cdr->xa.coding_info & XA_CI_SM) {
+		if(cdr->disc_mode & MODE_XA) {
+			if(cdr->xa.coding_info & XA_CI_SM) {
+				left = cdr->out[0].buf[cdr->out[0].read_off++];
+				right = cdr->out[1].buf[cdr->out[1].read_off++];
+			} else {
+				left = right = cdr->out[0].buf[cdr->out[0].read_off++];
+			}
+			src_muted = (cdr->regs.adpctl & ADPCTL_XA_MUTE) != 0;
+		} else {
 			left = cdr->out[0].buf[cdr->out[0].read_off++];
 			right = cdr->out[1].buf[cdr->out[1].read_off++];
-		} else {
-			left = right = cdr->out[0].buf[cdr->out[0].read_off++];
 		}
 
-		if(!(cdr->regs.adpctl & ADPCTL_XA_MUTE)) {
+		if(!cdr->muted && !src_muted) {
 			s.l = SAT(((left * cdr->vol_ll) >> 7) + ((right * cdr->vol_rl) >> 7), -0x8000, 0x7fff);
 			s.r = SAT(((left * cdr->vol_lr) >> 7) + ((right * cdr->vol_rr) >> 7), -0x8000, 0x7fff);
 		}
