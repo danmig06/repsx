@@ -22,3 +22,9 @@ make
 ## Compatibility
 ~70 games were tested (see ``compat.txt``), most of them work properly, some others may have issues that might not necessarily allow for a playable experience
 
+## Acknowledgements
+[PCSX-Redux](https://github.com/grumpycoders/pcsx-redux), [Duckstation](https://github.com/stenzek/duckstation) and [psxe](https://github.com/allkern/psxe) for various info and hints <br>
+
+[Jakub's Awesome test suite](https://github.com/JaCzekanski/ps1-tests) and [Amidog](https://psx.amidog.se/) for the very helpful hardware tests <br>
+
+The folks over at the [emudev discord server](https://discord.gg/exVbx3tRJ)
