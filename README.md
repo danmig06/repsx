@@ -27,4 +27,4 @@ make
 
 [Jakub's Awesome test suite](https://github.com/JaCzekanski/ps1-tests) and [Amidog](https://psx.amidog.se/) for the very helpful hardware tests <br>
 
-The folks over at the [emudev discord server](https://discord.gg/exVbx3tRJ)
+The folks over at the [emudev discord server](https://discord.gg/exVbx3tRJ) for helping (especially early on)
