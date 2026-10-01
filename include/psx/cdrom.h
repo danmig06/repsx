@@ -24,6 +24,12 @@ struct __psx_cdr_event {
 	bool active;
 };
 
+struct __psx_cdr_queue {
+	uint32_t size;
+	uint32_t read_off, write_off;
+	/* uint8_t data[]; */
+};
+
 struct psx_cdrom {
 	struct {
 		uint8_t ctrl;
@@ -50,9 +56,18 @@ struct psx_cdrom {
 		psx_lba_t end;
 		bool is_audio;
 	} current_track;
-	struct queue* data_queue;
-	struct queue* resp_queue;
-	struct queue* param_queue;
+	struct {
+		struct __psx_cdr_queue fifo;
+		uint8_t data[PSX_CDROM_DATABUF_SIZE];
+	} sector;
+	struct {
+		struct __psx_cdr_queue fifo;
+		uint8_t data[PSX_CDROM_RESPBUF_SIZE];
+	} resp;
+	struct {
+		struct __psx_cdr_queue fifo;
+		uint8_t data[PSX_CDROM_PARMBUF_SIZE];
+	} param;
 	psx_lba_t loc;
 	struct {
 		psx_lba_t loc;

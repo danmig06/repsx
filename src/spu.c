@@ -132,10 +132,10 @@ static inline int32_t spu_gauss_interp(struct psx_spu* spu, int n) {
 
 static inline int32_t spu_hermite_interp(struct psx_spu* spu, int n) {
 	int64_t y0, y1, y2, y3;
-	y0 = spu->voice_state[n].sample[ADPCM_OLDEST] << HERMITE_FP_BITS;
-	y1 = spu->voice_state[n].sample[ADPCM_OLDER]  << HERMITE_FP_BITS;
-	y2 = spu->voice_state[n].sample[ADPCM_OLD]    << HERMITE_FP_BITS;
-	y3 = spu->voice_state[n].sample[ADPCM_CUR]    << HERMITE_FP_BITS;
+	y0 = ((uint64_t)(int64_t)spu->voice_state[n].sample[ADPCM_OLDEST]) << HERMITE_FP_BITS;
+	y1 = ((uint64_t)(int64_t)spu->voice_state[n].sample[ADPCM_OLDER] ) << HERMITE_FP_BITS;
+	y2 = ((uint64_t)(int64_t)spu->voice_state[n].sample[ADPCM_OLD]   ) << HERMITE_FP_BITS;
+	y3 = ((uint64_t)(int64_t)spu->voice_state[n].sample[ADPCM_CUR]   ) << HERMITE_FP_BITS;
 
 	int64_t x = (spu->voice_state[n].pitch_counter & 0xfff) << (HERMITE_FP_BITS - 12);
 
@@ -208,21 +208,21 @@ static void spu_adpcm_decode_block(struct psx_spu* spu, int n) {
 		shift = 9;
 	}
 	int filter = ADP_FILTER_GET(block_header);
-	if(filter > 4) {
-		filter = 4;
+	if(filter >= 5) {
+		filter = 0;
 	}
 	int16_t raw = 0;
 	int32_t sample = 0;
 	int old_coef = g_adpcm_fc_old[filter];
 	int older_coef = g_adpcm_fc_older[filter];
-	int old_sample;
-	int older_sample;
+	int32_t old_sample;
+	int32_t older_sample;
 	int8_t cur_byte;
 	for(int i = 0; i < 28; i++) {
 		cur_byte = (src[i / 2] >> ((i % 2) * 4)) & 0xf;
-		raw = ((int8_t)(cur_byte << 4)) >> 4;
+		raw = ((int8_t)(cur_byte * 16)) / 16;
 
-		sample = raw << (12 - shift);
+		sample = ((uint32_t)(int32_t)raw) << (12 - shift);
 		old_sample = spu->voice_state[n].hist[ADPCM_CUR];
 		older_sample = spu->voice_state[n].hist[ADPCM_OLD];
 
@@ -277,7 +277,7 @@ static void spu_key_off(struct psx_spu* spu, uint32_t new) {
 
 static int16_t* spu_get_capture_ptr(struct psx_spu* spu, int capture) {
 	switch(capture) {
-		default:
+		default: UNREACHABLE();
 		case CAP_CD_LEFT:  return spu_get_ptr(spu, 0x000 + spu->capture_offset);
 		case CAP_CD_RIGHT: return spu_get_ptr(spu, 0x400 + spu->capture_offset);
 		case CAP_VOICE1:   return spu_get_ptr(spu, 0x800 + spu->capture_offset);
@@ -285,7 +285,7 @@ static int16_t* spu_get_capture_ptr(struct psx_spu* spu, int capture) {
 	}
 }
 
-static inline int16_t vmult(int32_t sample, int16_t vol) {
+static inline int16_t vmult(int64_t sample, int16_t vol) {
 	return SAT16((sample * vol) >> 15);
 }
 
@@ -303,13 +303,13 @@ static void spu_update_phase(struct psx_spu* spu, int n) {
 	}
 }
 
-static int16_t spu_env_tick(int32_t lvl, int dir, int mode, int shift, int step) {
+static int16_t spu_env_tick(int32_t lvl, int dir, int mode, int shift, int32_t step) {
 	step = 7 - step;
 	if(dir == DIR_DECREASING) {
 		step = ~step;
 	}
 
-	step <<= MAX(0, 11 - shift);
+	step = (uint32_t)step << MAX(0, 11 - shift);
 
 	if(dir == DIR_DECREASING && mode == MODE_EXPONENTIAL) {
 		step = (step * lvl) >> 15;
@@ -459,8 +459,8 @@ static void spu_process_reverb(struct psx_spu* spu, int32_t* left_out, int32_t* 
 		}
 	}
 
-	*left_out = (ul_out * spu->regs.revb_lvolume) >> 15;
-	*right_out = (ur_out * spu->regs.revb_rvolume) >> 15;
+	*left_out = vmult(ul_out, spu->regs.revb_lvolume);
+	*right_out = vmult(ur_out, spu->regs.revb_rvolume);
 }
 
 static sample_t spu_process_voice(struct psx_spu* spu, int n) {
@@ -545,8 +545,7 @@ static sample_t spu_process_voice(struct psx_spu* spu, int n) {
 		shift = ADSR_REL_SH_GET(spu->regs.voice[n].adsr);
 		step = 0;
 		break;
-	default:
-		return out;
+	default: UNREACHABLE();
 	}
 
 	int32_t decrement = ENV_COUNTER_MAX >> MAX(0, shift - 11);
@@ -799,8 +798,13 @@ uint16_t psx_spu_read16(struct psx_region* reg, uint32_t addr) {
 	uint8_t* regs = reg->peripheral;
 
 	if(register_offset >= sizeof(spu->regs)) {
-		log_error("Unhandled SPU read16 (offset <0x%x>)", register_offset);
-		return 0;
+		if(register_offset < 0x260) {
+			int vi = (register_offset - 0x200) / 4;
+			return (register_offset % 4 == 0) ? spu->regs.voice[vi].lvolume : spu->regs.voice[vi].rvolume;
+		} else {
+			log_error("Unhandled SPU read16 (offset <0x%x>)", register_offset);
+			return 0;
+		}
 	}
 
 	uint16_t val = *(uint16_t*)(&regs[register_offset]);

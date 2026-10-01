@@ -6,7 +6,7 @@
 
 #include "common.h"
 
-struct psx_bu {
+typedef struct psx_bu {
 	struct sio_dev dev;
 	bool session_active;
 	bool processing_command;
@@ -25,12 +25,14 @@ struct psx_bu {
 		psx_buwritefn_t write_sector;
 		psx_bureadfn_t read_sector;
 	} host;
-};
+} psx_bu;
 
-struct sio_dev* bu_connect(int n, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn);
-void bu_reset(struct sio_dev* bu);
-bool bu_send(struct sio_dev* bu, uint8_t byte);
-uint8_t bu_recv(struct sio_dev* bu);
-bool bu_tx_finished(struct sio_dev* bu);
+ASSERT_EXTRA_SIZE(psx_bu);
+
+void bu_connect(struct sio_dev* dev, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn);
+void bu_reset(struct sio_dev* dev);
+bool bu_send(struct sio_dev* dev, uint8_t byte);
+uint8_t bu_recv(struct sio_dev* dev);
+bool bu_tx_finished(struct sio_dev* dev);
 
 #endif

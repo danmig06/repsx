@@ -76,6 +76,7 @@ bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 	}
 
 	psx_mem_init(sys->memory);
+	sys->memory->sys = sys;
 	psx_memctl_init(sys->mc);
 	psx_sched_init(sys->sched, sys);
 	psx_cpu_init(sys->cpu, sys);
@@ -95,9 +96,7 @@ bool psx_system_init(struct psx_system* sys, const char* bios_path) {
 
 void psx_system_uninit(struct psx_system* sys) {
 	free(sys->cdrom->out[0].buf);
-	free(sys->cdrom->resp_queue);
-	free(sys->cdrom->data_queue);
-	free(sys->cdrom->param_queue);
+	free(sys->sio->dev.in[0]);
 	free(sys->mdec->mb_data);
 	free(sys->spu->out.buf);
 	free(sys->spu->mem);
@@ -108,19 +107,21 @@ void psx_system_uninit(struct psx_system* sys) {
 // TODO: psx_system_reset
 
 void psx_system_add_pad(struct psx_system* sys, int port, void* host_data, psx_padpollfn_t pollfn) {
-	sys->sio->dev.in[port] = pad_connect(port, host_data, pollfn);
+	struct sio_dev* slot = sys->sio->dev.in[port & 1];
+	pad_connect(slot, host_data, pollfn);
 }
 
-void psx_system_remove_pad(struct psx_system* sys, int port) {
-	sys->sio->dev.in[port] = NULL;
+void psx_system_remove_dev(struct psx_system* sys, int port) {
+	sio_dev_clear(sys->sio->dev.in[port]);
 }
 
 void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
-	sys->sio->dev.bu[port] = bu_connect(port, host_data, write_fn, read_fn);
+	struct sio_dev* slot = sys->sio->dev.bu[port & 1];
+	bu_connect(slot, host_data, write_fn, read_fn);
 }
 
 void psx_system_remove_mcd(struct psx_system* sys, int port) {
-	sys->sio->dev.bu[port] = NULL;
+	sio_dev_clear(sys->sio->dev.bu[port]);
 }
 
 void psx_system_signal(struct psx_system* sys, int sig) {

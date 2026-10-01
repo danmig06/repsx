@@ -18,7 +18,6 @@ void psx_mem_init(struct psx_mem* memory) {
 		perror("Failed to allocate physical system memory: ");
 	}
 	memset(memory->phys, 0, PSX_MEM_PHYS_SIZE);
-
 	memset(memory->scratch, 0, PSX_MEM_SCRATCH_SIZE);
 }
 

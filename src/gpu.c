@@ -101,7 +101,20 @@ static void gpu_vblank(struct psx_sched* sched, struct psx_sev* self) {
 		w,
 		h - (overscan * 2)
 	};
-	gpu->renderer.update(&gpu->renderer, &dpy_area, (gpu->gpustat & GPUSTAT_RGB24EN) != 0, !(gpu->gpustat & GPUSTAT_DPY_DISABLE));
+	int flags = 0;
+	if(gpu->gpustat & GPUSTAT_VINTERLACE) {
+		flags |= PSX_RENDERER_PRF_INTERLACE;
+		if(gpu->gpustat & GPUSTAT_INTERLACE_FIELD) {
+			flags |= PSX_RENDERER_PRF_ODD_FIELD;
+		}
+	}
+	if(!(gpu->gpustat & GPUSTAT_DPY_DISABLE)) {
+		flags |= PSX_RENDERER_PRF_DISPLAY_EN;
+	}
+	if(gpu->gpustat & GPUSTAT_RGB24EN) {
+		flags |= PSX_RENDERER_PRF_24_BIT;
+	}
+	gpu->renderer.update(&gpu->renderer, &dpy_area, flags);
 	psx_sched_remove_ev(sched, self->id);
 	psx_sched_add_ev(sched, &vblank_event);
 }
@@ -288,7 +301,7 @@ static void update_gpuread(struct psx_gpu* gpu) {
 
 	off_x = gpu->blit.cx - gpu->blit.box.x;
 	off_y = gpu->blit.cy - gpu->blit.box.y;
-	packet |= gpu->blit.texels[off_x + (off_y * gpu->blit.box.w)] << 16;
+	packet |= ((uint32_t)gpu->blit.texels[off_x + (off_y * gpu->blit.box.w)]) << 16;
 	gpu->blit.cx++;
 	if(gpu->blit.cx == max_x) {
 		gpu->blit.cx = gpu->blit.box.x;

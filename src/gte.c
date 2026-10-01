@@ -118,6 +118,8 @@
 #define gte_log(...) 
 #endif
 
+#define SEXT44(v) ((int64_t)((uint64_t)(v) << 20) >> 20)
+
 #define CHK_MAC1(expr) check_mac(cpu, 0, expr)
 #define CHK_MAC2(expr) check_mac(cpu, 1, expr)
 #define CHK_MAC3(expr) check_mac(cpu, 2, expr)
@@ -133,7 +135,7 @@ static int64_t check_mac(struct psx_cpu* cpu, int flag_idx, int64_t value) {
 		gte_log(stderr, "(positive overflow)");
 	}
 
-	int64_t res = (value << 20) >> 20;
+	int64_t res = SEXT44(value);
 	gte_log(stderr, "\n-> 0x%016lx\n", res);
 	return res;
 }
@@ -153,7 +155,7 @@ static int32_t saturate_mac(struct psx_cpu* cpu, int flag_idx, int64_t value) {
 		gte_log(stderr, "(positive overflow)");
 	}
 
-	int32_t res = (int32_t)(((value << 20) >> 20) >> (SF * 12));
+	int32_t res = (int32_t)(SEXT44(value) >> (SF * 12));
 	gte_log(stderr, "\n-> 0x%08x\n", res);
 	return res;
 }
@@ -277,42 +279,6 @@ static uint8_t check_rgb(struct psx_cpu* cpu, int flag_idx, int32_t value) {
 	return value;
 }
 
-#define PORTABLE_LZC 0
-#if PORTABLE_LZC
-
-static uint32_t npw2(uint32_t n) {
-	--n;
-	n |= n >> 1;
-	n |= n >> 2;
-	n |= n >> 4;
-	n |= n >> 8;
-	n |= n >> 16;
-	return n + 1;
-}
-
-static int bcnt(uint32_t n) {
-	n = n - ((n >> 1) & 0x55555555);
-	n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
-	return (((n + (n >> 4) & 0xf0f0f0f) * 0x1010101) >> 24) & 0x3f;
-}
-
-static int tzc(uint32_t n) {
-	return 32 - bcnt((~n) ^ (n | ((n & -n) - 1)));
-}
-
-// broken
-static inline int lzc(uint32_t n) {
-	return 32 - tzc(npw2(n + !(n & 1)));
-}
-
-#else
-
-static inline int lzc(uint32_t n) {
-	return __builtin_clz((n & 0x80000000) ? ~n : n);
-}
-
-#endif
-
 static inline void update_lzcr(struct psx_cpu* cpu) {
 	if(LZCS == -1 || !LZCS) {
 		LZCR = 32;
@@ -320,7 +286,7 @@ static inline void update_lzcr(struct psx_cpu* cpu) {
 		return;
 	}
 
-	LZCR = lzc(LZCS);
+	LZCR = LZC(LZCS);
 }
 
 static uint8_t g_unr_table[] = {
@@ -349,7 +315,7 @@ static inline uint32_t unr_divide(struct psx_cpu* cpu, uint64_t n, uint64_t d) {
 		return 0x1ffff;
 	}
 
-	int z = lzc(d) - 16;
+	int z = LZC(d) - 16;
 	n = n << z;
 	d = d << z;
 	int32_t u = g_unr_table[(d - 0x7fc0) >> 7] + 0x101;

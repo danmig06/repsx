@@ -232,9 +232,7 @@ static uint32_t fetch_word_dev(struct psx_system* sys, struct copyvec* copy_stat
 		} else {
 			return (copy_state->addr - 4) & 0x1fffff;
 		}
-	default:
-		panic("invalid channel");
-		break;
+	default: UNREACHABLE();
 	}
 
 	return 0;
@@ -259,9 +257,7 @@ static void write_word_dev(struct psx_system* sys, enum dmachnidx_t channel, uin
 		break;
 	case DMACHN_OTC:
 		break;
-	default:
-		panic("invalid channel");
-		break;
+	default: UNREACHABLE();
 	}
 }
 
@@ -396,9 +392,7 @@ static void dma_do_transfer(struct psx_dmac* dmac, enum dmachnidx_t channel) {
 		chn->ctrl &= ~CHCR_FORCE;
 		do_dev_blkcopy(dmac, channel);
 		break;
-	default:
-		panic("invalid channel");
-		break;
+	default: UNREACHABLE();
 	}
 
 #ifdef INSTANT_DMA

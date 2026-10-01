@@ -8,7 +8,7 @@
 
 #include "common.h"
 
-struct psx_pad {
+typedef struct psx_pad {
 	struct sio_dev dev;
 	struct {
 		uint8_t buf[8];
@@ -23,9 +23,11 @@ struct psx_pad {
 		void* data;
 		psx_padpollfn_t poll;
 	} host;
-};
+} psx_pad;
 
-struct sio_dev* pad_connect(int n, void* host_data, psx_padpollfn_t poll_host);
+ASSERT_EXTRA_SIZE(psx_pad);
+
+void pad_connect(struct sio_dev* dev, void* host_data, psx_padpollfn_t poll_host);
 void pad_reset(struct sio_dev* dev);
 bool pad_send(struct sio_dev* dev, uint8_t byte);
 uint8_t pad_recv(struct sio_dev* dev);

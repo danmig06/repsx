@@ -30,6 +30,11 @@ void sio_response_event(struct psx_sched* sched, struct psx_sev* self) {
 
 void psx_sio_init(struct psx_sio* sio, struct psx_system* sys) {
 	sio->sys = sys;
+	struct sio_dev_base* port = calloc(sizeof(*port), 4);
+	sio->dev.in[0] = &port[0].dev;
+	sio->dev.in[1] = &port[1].dev;
+	sio->dev.bu[0] = &port[2].dev;
+	sio->dev.bu[1] = &port[3].dev;
 	psx_sio_reset(sio);
 }
 
@@ -44,14 +49,14 @@ static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 	struct sio_dev* dev = NULL;
 	if(device_id >= PSX_SIO_DEV_MEMCARD) {
 		dev = sio->dev.bu[SIO0_PORT(sio)];
-		if(!dev) {
+		if(dev->id == PSX_SIO_DEV_NONE) {
 			sio->regs.stat &= ~STAT_DSR;
 			sio->regs.stat |= STAT_RXREADY;
 			return false;
 		}
 	} else {
 		dev = sio->dev.in[SIO0_PORT(sio)];
-		if(!dev || dev->id != device_id) {
+		if(device_id == PSX_SIO_DEV_NONE || dev->id != device_id) {
 			// the requested device is not connected, the system will try to read the device ID
 			// anyway and the response should just be HiZ
 			sio->regs.stat &= ~STAT_DSR;
@@ -77,16 +82,16 @@ static bool do_tx_select(struct psx_sio* sio, uint8_t device_id) {
 
 static void unselect_device(struct psx_sio* sio) {
 	log_trace("SIO0: unselected device 0x%02x", (sio->selected_dev) ? sio->selected_dev->id : 0x00);
-	if(sio->dev.in[0]) {
+	if(sio->dev.in[0]->id != PSX_SIO_DEV_NONE) {
 		sio->dev.in[0]->reset(sio->dev.in[0]);
 	}
-	if(sio->dev.in[1]) {
+	if(sio->dev.in[1]->id != PSX_SIO_DEV_NONE) {
 		sio->dev.in[1]->reset(sio->dev.in[1]);
 	}
-	if(sio->dev.bu[0]) {
+	if(sio->dev.bu[0]->id != PSX_SIO_DEV_NONE) {
 		sio->dev.bu[0]->reset(sio->dev.bu[0]);
 	}
-	if(sio->dev.bu[1]) {
+	if(sio->dev.bu[1]->id != PSX_SIO_DEV_NONE) {
 		sio->dev.bu[1]->reset(sio->dev.bu[1]);
 	}
 	sio->regs.stat |= (STAT_TXREADY | STAT_TXIDLE);

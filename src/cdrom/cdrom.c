@@ -13,9 +13,9 @@
 
 void psx_cdr_init(struct psx_cdrom* cdr, struct psx_system* sys) {
 	cdr->sys = sys;
-	cdr->data_queue  = queue_create(PSX_CDROM_DATABUF_SIZE);
-	cdr->resp_queue  = queue_create(PSX_CDROM_RESPBUF_SIZE);
-	cdr->param_queue = queue_create(PSX_CDROM_PARMBUF_SIZE);
+	cdr->sector.fifo = (struct __psx_cdr_queue){ .size = sizeof(cdr->sector.data) };
+	cdr->resp.fifo   = (struct __psx_cdr_queue){ .size = sizeof(cdr->resp.data)   };
+	cdr->param.fifo  = (struct __psx_cdr_queue){ .size = sizeof(cdr->param.data)  };
 	cdr->out[0].buf = malloc(XA_MAX_OUTPUT_SIZE);
 	cdr->out[1].buf = &cdr->out[0].buf[XA_MAX_OUTPUT_SAMPLES / 2];
 	cdr->disc = NULL;
@@ -25,9 +25,9 @@ void psx_cdr_init(struct psx_cdrom* cdr, struct psx_system* sys) {
 void psx_cdr_reset(struct psx_cdrom* cdr) {
 	memset(&cdr->regs, 0, sizeof(cdr->regs));
 
-	queue_clear(cdr->data_queue);
-	queue_clear(cdr->resp_queue);
-	queue_clear(cdr->param_queue);
+	queue_clear(&cdr->sector.fifo);
+	queue_clear(&cdr->resp.fifo);
+	queue_clear(&cdr->param.fifo);
 
 	cdr->ack = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_RESP1, .active = false };
 	cdr->comp = (struct __psx_cdr_event){ .ev.id = PSX_SEV_ID_CDROM_RESP2, .active = false };
@@ -48,27 +48,27 @@ void psx_cdr_reset(struct psx_cdrom* cdr) {
 }
 
 static void cdr_push_param(struct psx_cdrom* cdr, uint8_t pb) {
-	queue_push(cdr->param_queue, pb);
+	queue_push(&cdr->param.fifo, pb);
 	cdr->regs.ctrl &= ~CTRL_PARAM_EMPTY;
 
-	if(queue_full(cdr->param_queue)) {
+	if(queue_full(&cdr->param.fifo)) {
 		cdr->regs.ctrl &= ~CTRL_PARAM_READY;
 	}
 }
 
 static uint8_t cdr_pop_response(struct psx_cdrom* cdr) {
-	uint8_t rb = queue_pop(cdr->resp_queue);
+	uint8_t rb = queue_pop(&cdr->resp.fifo);
 
-	if(queue_empty(cdr->resp_queue)) {
+	if(queue_empty(&cdr->resp.fifo)) {
 		cdr->regs.ctrl &= ~CTRL_RESULT_READY;
 	}
 	return rb;
 }
 
 static uint8_t cdr_pop_data(struct psx_cdrom* cdr) {
-	uint8_t rb = queue_pop(cdr->data_queue);
+	uint8_t rb = queue_pop(&cdr->sector.fifo);
 
-	if(queue_empty(cdr->data_queue)) {
+	if(queue_empty(&cdr->sector.fifo)) {
 		cdr->regs.ctrl &= ~CTRL_DATA_REQUEST;
 	}
 	return rb;
@@ -88,8 +88,7 @@ void cdr_bank0_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		// log_trace("CDROM: HCHPCTL write (%02x)", val);
 		cdr->regs.hchp_ctrl = val;
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 }
 
@@ -115,12 +114,11 @@ void cdr_bank1_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		}
 
 		if(val & BIT(6)) {
-			queue_clear(cdr->param_queue);
+			queue_clear(&cdr->param.fifo);
 			cdr->regs.ctrl |= CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
 		}
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 }
 
@@ -137,8 +135,7 @@ void cdr_bank2_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		log_debug("CDROM: ATV1 write (0x%02x)", val);
 		cdr->regs.atv1 = val;
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 }
 
@@ -162,8 +159,7 @@ void cdr_bank3_write(struct psx_cdrom* cdr, uint32_t off, uint8_t val) {
 		}
 		cdr->regs.adpctl = val & ~ADPCTL_CHANGE;
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 }
 
@@ -196,10 +192,10 @@ psx_cdr_sample_t psx_cdr_pop_sample(struct psx_cdrom* cdr) {
 }
 
 uint32_t psx_cdr_direct_out(struct psx_cdrom* cdr) {
-	uint32_t word = queue_pop(cdr->data_queue) | (queue_pop(cdr->data_queue) << 8) |
-		       (queue_pop(cdr->data_queue) << 16) | (queue_pop(cdr->data_queue) << 24);
+	uint32_t word = queue_pop(&cdr->sector.fifo) | (queue_pop(&cdr->sector.fifo) << 8) |
+		       (queue_pop(&cdr->sector.fifo) << 16) | ((uint32_t)queue_pop(&cdr->sector.fifo) << 24);
 
-	if(queue_empty(cdr->data_queue)) {
+	if(queue_empty(&cdr->sector.fifo)) {
 		cdr->regs.ctrl &= ~CTRL_DATA_REQUEST;
 	}
 	return word;
@@ -224,10 +220,10 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 		return ctrl;
 	}
 	case 1:
-		log_debug("CDROM: response read (%02x)", queue_peek(cdr->resp_queue));
+		log_debug("CDROM: response read (%02x)", queue_peek(&cdr->resp.fifo));
 		return cdr_pop_response(cdr);
 	case 2:
-		// log_debug("CDROM: data read (%02x)", queue_peek(cdr->data_queue));
+		// log_debug("CDROM: data read (%02x)", queue_peek(&cdr->sector.fifo));
 		cdr->regs.rd_data = cdr_pop_data(cdr);
 		return cdr->regs.rd_data;
 	case 3:
@@ -239,8 +235,7 @@ uint8_t psx_cdr_read8(struct psx_region* reg, uint32_t addr) {
 			return cdr->regs.irq_mask;
 		}
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 	return 0;
 }
@@ -266,8 +261,7 @@ void psx_cdr_write8(struct psx_region* reg, uint32_t addr, uint8_t val) {
 	case 3:
 		cdr_bank3_write(cdr, register_offset, val);
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 }
 

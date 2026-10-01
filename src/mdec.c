@@ -205,7 +205,7 @@ static void mdec_decode_blocks(struct psx_mdec* mdec) {
 }
 
 static inline uint32_t mdec_read_block(struct psx_mdec* mdec) {
-	if(mdec->block.offset == mdec->block.size) {
+	if(mdec->block.offset >= mdec->block.size) {
 		bool end_of_buffer = mdec->block.index == mdec->block.n_available - 1;
 		if(end_of_buffer && mdec->dec.finished) {
 			return 0xaaaaaaaa;
@@ -231,8 +231,8 @@ void psx_mdec_direct_in(struct psx_mdec* mdec, uint32_t word) {
 	*/
 	mdec->input.dst[mdec->input.offset++] = word;
 	if(mdec->input.is_data) {
-		uint16_t words_left = STAT_NWORDS_GET(mdec->regs.stat);
-		STAT_NWORDS_SET(mdec->regs.stat, words_left - 1);
+		uint16_t words_left = STAT_NWORDS_GET(mdec->regs.stat) - 1;
+		STAT_NWORDS_SET(mdec->regs.stat, words_left);
 	}
 
 	if(mdec->input.offset == mdec->input.size) {

@@ -11,7 +11,6 @@
 extern "C" {
 #endif
 
-
 struct psx_timer {
 	struct {
 		uint32_t base;

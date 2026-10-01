@@ -72,6 +72,9 @@ static inline pos_t make_clut(uint16_t cmd) {
 }
 
 void gp0_cache_clear(struct psx_gpu* gpu) {
+	if(gpu->renderer.cache_clear) {
+		gpu->renderer.cache_clear(&gpu->renderer);
+	}
 	return;
 }
 
@@ -238,13 +241,8 @@ void gp0_polyline_update(struct psx_gpu* gpu) {
 		int32_t dy = v[1].y - v[0].y;
 		int32_t adx = ABS(dx);
 		int32_t ady = ABS(dy);
-
 		if(adx > 0x3ff || ady > 0x1ff) {
 			break;
-		} else if(adx > ady) {
-			(dx > 0) ? v[1].x++ : v[0].x++;
-		} else {
-			(dy > 0) ? v[1].y++ : v[0].y++;
 		}
 
 		gpu_render_line(gpu, line.is_gouraud_shaded,
@@ -296,13 +294,8 @@ void gp0_line(struct psx_gpu* gpu) {
 	int32_t dy = v[1].y - v[0].y;
 	int32_t adx = ABS(dx);
 	int32_t ady = ABS(dy);
-
 	if(adx > 0x3ff || ady > 0x1ff) {
 		return;
-	} else if(adx > ady) {
-		(dx > 0) ? v[1].x++ : v[0].x++;
-	} else {
-		(dy > 0) ? v[1].y++ : v[0].y++;
 	}
 
 	int st_mode = (line.is_transparent) ? GPUSTAT_ST_GET(gpu->gpustat) : PSX_RENDERER_ST_NONE;
@@ -385,7 +378,7 @@ void gp0_fillvram(struct psx_gpu* gpu) {
 	gpu_render_rect(gpu, false,
 		       .rect.v = { .x = tl.x, .y = tl.y, .color = color0 },
 		       .rect.w = size.x, .rect.h = size.y, .rect.is_clear = true, .use_mask_bit = false,
-		       .set_mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) != 0);
+		       .set_mask_bit = (gpu->gpustat & GPUSTAT_SETMSK) != 0, .transparency_mode = PSX_RENDERER_ST_NONE);
 }
 
 static void gp0_image_load_update(struct psx_gpu* gpu) {

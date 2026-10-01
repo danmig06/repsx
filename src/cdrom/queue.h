@@ -1,27 +1,75 @@
 #ifndef PSX_CDROM_QUEUE_H
 #define PSX_CDROM_QUEUE_H
 
+#include <psx/cdrom.h>
+
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 
-struct queue {
-	uint32_t size;
-	uint32_t read_off;
-	uint32_t write_off;
-	uint8_t buf[];
-};
+typedef struct __psx_cdr_queue queue_t;
 
-struct queue* queue_create(uint32_t size);
-void queue_clear(struct queue* q);
+#define QUEUE_BUF(q) ((uint8_t*)((q) + 1))
 
-void queue_push(struct queue* q, uint8_t val);
-void queue_push_buf(struct queue* q, void* buf, uint32_t size);
-uint8_t queue_pop(struct queue* q);
-uint8_t queue_peek(struct queue* q);
-uint8_t* queue_get_item(struct queue* q, uint32_t pos);
+static inline uint32_t queue_items(queue_t* q) {
+	return q->write_off - q->read_off;
+}
 
-uint32_t queue_items(struct queue* q);
-bool queue_full(struct queue* q);
-bool queue_empty(struct queue* q);
+static inline bool queue_full(queue_t* q) {
+	return q->write_off == q->size;
+}
+
+static inline bool queue_empty(queue_t* q) {
+	return q->write_off == q->read_off;
+}
+
+static inline void queue_clear(queue_t* q) {
+	uint8_t* data = QUEUE_BUF(q);
+	memset(data, 0, q->size);
+	q->read_off = 0;
+	q->write_off = 0;
+}
+
+static inline void queue_push(queue_t* q, uint8_t val) {
+	if(queue_full(q)) {
+		return;
+	}
+
+	uint8_t* data = QUEUE_BUF(q);
+	data[q->write_off++] = val;
+}
+
+static inline void queue_push_buf(queue_t* q, void* buf, uint32_t size) {
+	uint32_t bytes_available = q->size - q->write_off;
+	if(bytes_available == 0) {
+		return;
+	}
+	if(size > bytes_available) {
+		size = bytes_available;
+	}
+
+	uint8_t* data = QUEUE_BUF(q);
+	memcpy(&data[q->write_off], buf, size);
+	q->write_off += size;
+}
+
+static inline uint8_t queue_pop(queue_t* q) {
+	if(queue_empty(q)) {
+		return 0;
+	}
+
+	uint8_t* data = QUEUE_BUF(q);
+	return data[q->read_off++];
+}
+
+static inline uint8_t queue_peek(queue_t* q) {
+	if(queue_empty(q)) {
+		return 0;
+	}
+
+	uint8_t* data = QUEUE_BUF(q);
+	return data[q->read_off];
+}
 
 #endif // #ifndef PSX_CDROM_QUEUE_H

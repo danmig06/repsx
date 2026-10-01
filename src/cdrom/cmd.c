@@ -140,7 +140,7 @@ static void cdr_remove_ev(struct psx_sched* sched, cdr_ev_t* ev) {
 }
 
 static void cdr_clear_response(struct psx_cdrom* cdr) {
-	queue_clear(cdr->resp_queue);
+	queue_clear(&cdr->resp.fifo);
 	cdr->regs.ctrl &= ~CTRL_RESULT_READY;
 }
 
@@ -160,7 +160,7 @@ static void def_ack_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 
 	cdr_clear_response(cdr);
 	if(self->resp_size > 0) {
-		queue_push_buf(cdr->resp_queue, self->response, self->resp_size);
+		queue_push_buf(&cdr->resp.fifo, self->response, self->resp_size);
 		cdr->regs.ctrl |= CTRL_RESULT_READY;
 		self->resp_size = 0;
 	}
@@ -183,7 +183,7 @@ static void def_comp_evcb(struct psx_sched* sched, struct psx_sev* _self) {
 
 	cdr_clear_response(cdr);
 	if(self->resp_size > 0) {
-		queue_push_buf(cdr->resp_queue, self->response, self->resp_size);
+		queue_push_buf(&cdr->resp.fifo, self->response, self->resp_size);
 		cdr->regs.ctrl |= CTRL_RESULT_READY;
 		self->resp_size = 0;
 	}
@@ -210,7 +210,7 @@ static void deliver_async_irq(struct psx_sched* sched, struct psx_sev* _self) {
 	}
 	cdr_clear_response(cdr);
 	if(self->resp_size > 0) {
-		queue_push_buf(cdr->resp_queue, self->response, self->resp_size);
+		queue_push_buf(&cdr->resp.fifo, self->response, self->resp_size);
 		cdr->regs.ctrl |= CTRL_RESULT_READY;
 		self->resp_size = 0;
 	}
@@ -277,7 +277,7 @@ static void cdr_schedule_async_irq(struct psx_cdrom* cdr, int ival) {
 		if(time_diff > IRQ_MIN_COOLDOWN) {
 			cdr_clear_response(cdr);
 			if(cdr->async_irq.resp_size > 0) {
-				queue_push_buf(cdr->resp_queue, cdr->async_irq.response, cdr->async_irq.resp_size);
+				queue_push_buf(&cdr->resp.fifo, cdr->async_irq.response, cdr->async_irq.resp_size);
 				cdr->regs.ctrl |= CTRL_RESULT_READY;
 				cdr->async_irq.resp_size = 0;
 			}
@@ -324,7 +324,7 @@ static void _put_response(cdr_ev_t* ev, void* rb, uint8_t size) {
 }
 
 static inline uint8_t cdr_pop_param(struct psx_cdrom* cdr) {
-	return queue_pop(cdr->param_queue);
+	return queue_pop(&cdr->param.fifo);
 }
 
 static inline void cdr_reset_loc(struct psx_cdrom* cdr) {
@@ -344,6 +344,11 @@ static inline void cdr_set_drive_state(struct psx_cdrom* cdr, uint8_t new_stat) 
 	uint8_t prev_stat = cdr->state & (STAT_READING | STAT_PLAYING | STAT_SEEKING);
 	if(prev_stat != 0) {
 		psx_sched_remove_ev(cdr->sys->sched, cdr->drive_event.id);
+		// if Play is being stopped, clear the sample buffer to prevent glitches
+		if((prev_stat ^ new_stat) & STAT_PLAYING) {
+			cdr->out[CD_LEFT].read_off = cdr->out[CD_LEFT].write_off = 0;
+			cdr->out[CD_RIGHT].read_off = cdr->out[CD_RIGHT].write_off = 0;
+		}
 		cdr->state &= ~prev_stat;
 	}
 
@@ -405,13 +410,13 @@ void psx_cdr_tray_open(struct psx_cdrom* cdr) {
 	cdr->state = STAT_SHELL_OPEN;
 	cdr_clear_response(cdr);
 	cdr->shell_open = true;
-	queue_push(cdr->resp_queue, cdr->state | STAT_SEEK_ERROR);
-	queue_push(cdr->resp_queue, CDROM_ERR_SHELL_OPENED);
+	queue_push(&cdr->resp.fifo, cdr->state | STAT_SEEK_ERROR);
+	queue_push(&cdr->resp.fifo, CDROM_ERR_SHELL_OPENED);
 	cdr_raise_irq(cdr, 5);
 }
 
 static inline void run_cmd(struct psx_cdrom* cdr, void (*cmd_func)(struct psx_cdrom*), uint32_t n_args, bool check_disc) {
-	if(queue_items(cdr->param_queue) != n_args) {
+	if(queue_items(&cdr->param.fifo) != n_args) {
 		enq_error(cdr, CDROM_ERR_PARAMETERS, 0);
 		return;
 	} else if(check_disc && !cdr->disc) {
@@ -435,7 +440,7 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 		run_cmd(cdr, CdlSetloc, 3, true);
 		break;
 	case CMD_PLAY:
-		if(queue_items(cdr->param_queue) > 1) {
+		if(queue_items(&cdr->param.fifo) > 1) {
 			enq_error(cdr, CDROM_ERR_PARAMETERS, 0);
 			break;
 		} else if(!cdr->disc) {
@@ -507,7 +512,7 @@ void cdr_run_cmd(struct psx_cdrom* cdr) {
 		break;
 	}
 
-	queue_clear(cdr->param_queue);
+	queue_clear(&cdr->param.fifo);
 	cdr->regs.ctrl |= CTRL_PARAM_EMPTY | CTRL_PARAM_READY;
 	cdr->regs.command = 0;
 }
@@ -544,11 +549,11 @@ static void play_drive_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	}
 
 	cdr->async_irq.resp_size = 0;
-	queue_clear(cdr->data_queue);
+	queue_clear(&cdr->sector.fifo);
 	int sample_step = (cdr->disc_mode & MODE_DOUBLE_SPEED) ? 2 : 1;
 	if(cdr->current_track.is_audio) {
-		cdr->disc->read_sector(cdr->disc->host_data, &cdr->disc->tracks[cdr->current_track.idx], cdr->loc, cdr->data_queue->buf);
-		int16_t* samples = (int16_t*)cdr->data_queue->buf;
+		cdr->disc->read_sector(cdr->disc->host_data, &cdr->disc->tracks[cdr->current_track.idx], cdr->loc, cdr->sector.data);
+		int16_t* samples = (int16_t*)cdr->sector.data;
 		for(int i = 0; i < (PSX_CDROM_DATABUF_SIZE / 2); i += sample_step) {
 			cdr->out[CD_LEFT ].buf[i] = samples[(i * 2) + 0];
 			cdr->out[CD_RIGHT].buf[i] = samples[(i * 2) + 1];
@@ -664,7 +669,7 @@ static void play_ack_evcb(struct psx_sched* sched, struct psx_sev* self) {
 
 void CdlPlay(struct psx_cdrom* cdr) {
 	int track = 0;
-	if(queue_items(cdr->param_queue)) {
+	if(queue_items(&cdr->param.fifo)) {
 		track = cdr_pop_param(cdr);
 		log_debug("CdlPlay(%02x)", track);
 	} else {
@@ -749,9 +754,9 @@ static void cdr_xa_decode_block(struct psx_cdrom* cdr, uint8_t* src, int blk, in
 	int8_t cur_byte;
 	for(int i = 0; i < 28; i++) {
 		cur_byte = (src[16 + blk + (i * 4)] >> (nibble * 4)) & 0xf;
-		raw = ((int8_t)(cur_byte << 4)) >> 4;
+		raw = ((int8_t)(cur_byte * 16)) / 16;
 
-		sample = raw << (12 - shift);
+		sample = ((uint32_t)(int32_t)raw) << (12 - shift);
 		sample += ((old_coef * hist[0]) - (older_coef * hist[1]) + 32) / 64;
 
 		hist[1] = hist[0];
@@ -765,7 +770,7 @@ static void cdr_xa_decode_block(struct psx_cdrom* cdr, uint8_t* src, int blk, in
 }
 
 static void cdr_xa_decode_sector(struct psx_cdrom* cdr) {
-	uint8_t* src = cdr->data_queue->buf;
+	uint8_t* src = cdr->sector.data;
 	cdr->xa.coding_info = src[12 + 4 + 3];
 	bool is_stereo = (cdr->xa.coding_info & XA_CI_SM) != 0;
 	cdr->out[CD_LEFT].read_off = 0;
@@ -811,12 +816,12 @@ static void read_drive_evcb(struct psx_sched* sched, struct psx_sev* self) {
 		cdr->state |= STAT_READING;
 	}
 
-	queue_clear(cdr->data_queue);
+	queue_clear(&cdr->sector.fifo);
 	int sync_size = (cdr->disc_mode & MODE_SECTOR_SIZE) ? 12 : 24;
 	psx_lba_t read_loc = cdr->loc++;
-	cdr->disc->read_sector(cdr->disc->host_data, &cdr->disc->tracks[cdr->current_track.idx], read_loc, cdr->data_queue->buf);
-	sector_hdr_t* header = (void*)&cdr->data_queue->buf[SECTOR_HDR_OFF];
-	xa_hdr_t* subheader = (void*)&cdr->data_queue->buf[SECTOR_HDR_OFF + sizeof(header)];
+	cdr->disc->read_sector(cdr->disc->host_data, &cdr->disc->tracks[cdr->current_track.idx], read_loc, cdr->sector.data);
+	sector_hdr_t* header = (void*)&cdr->sector.data[SECTOR_HDR_OFF];
+	xa_hdr_t* subheader = (void*)&cdr->sector.data[SECTOR_HDR_OFF + sizeof(header)];
 	if(header->mode == 2 && (cdr->disc_mode & MODE_XA)) {
 		if((subheader->submode & XA_SM_AUDIO) && (subheader->submode & XA_SM_REALTIME)) {
 			cdr->regs.ctrl &= ~CTRL_DATA_REQUEST;
@@ -828,8 +833,8 @@ static void read_drive_evcb(struct psx_sched* sched, struct psx_sev* self) {
 	}
 
 	cdr->regs.ctrl |= CTRL_DATA_REQUEST;
-	cdr->data_queue->read_off = sync_size;
-	cdr->data_queue->write_off = cdr->data_queue->read_off + ((cdr->disc_mode & MODE_SECTOR_SIZE) ? 0x924 : 0x800);
+	cdr->sector.fifo.read_off = sync_size;
+	cdr->sector.fifo.write_off = cdr->sector.fifo.read_off + ((cdr->disc_mode & MODE_SECTOR_SIZE) ? 0x924 : 0x800);
 	log_debug("CDROM: read at "MSF_FMT" (%d LBA) | mode=0x%02x submode=0x%02x",
 			MSF_ARG(read_loc), read_loc, header->mode, subheader->submode);
 	cdr->async_irq.resp_size = 0;
@@ -1121,7 +1126,7 @@ void CdlGetID(struct psx_cdrom* cdr) {
 	response.stat = cdr->state;
 	if(cdr->disc) {
 		// TODO: USA region is forced here
-		char scex_str[] = "SCEA";
+		const char scex_str[] = "SCEA";
 		switch(cdr->disc_type) {
 		case PSX_DT_LICENSED:
 			response.disc_type = MODE2_DISC_FLAG;
@@ -1129,12 +1134,10 @@ void CdlGetID(struct psx_cdrom* cdr) {
 			break;
 		case PSX_DT_AUDIO:
 			response.disc_type = AUDIO_DISC_FLAG;
-			response.flags |= IDFLAG_AUDIO;
-			memcpy(response.validation_str, scex_str, 4);
+			response.flags |= IDFLAG_AUDIO | IDFLAG_UNLICENSED;
 			break;
 		default:
 		case PSX_DT_INVALID:
-			response.stat |= STAT_ID_ERROR;
 			response.flags |= IDFLAG_UNLICENSED;
 			break;
 		}
@@ -1142,13 +1145,18 @@ void CdlGetID(struct psx_cdrom* cdr) {
 		response.flags |= IDFLAG_NO_DISC | IDFLAG_UNLICENSED;
 	}
 
+	int intr = 2;
+	if(response.flags & IDFLAG_UNLICENSED) {
+		intr = 5;
+		response.stat |= STAT_ID_ERROR;
+	}
 	put_comp_response(&response, sizeof(response));
-	cdr_schedule_comp_ev(cdr, (response.stat & STAT_ID_ERROR) ? 5 : 2);
+	cdr_schedule_comp_ev(cdr, intr);
 }
 
 void CdlGetlocL(struct psx_cdrom* cdr) {
 	log_debug("CDROM: CdlGetlocL()");
-	put_ack_response(&cdr->data_queue->buf[SECTOR_HDR_OFF], 8);
+	put_ack_response(&cdr->sector.data[SECTOR_HDR_OFF], 8);
 	cdr_schedule_ack_ev(cdr, 3);
 }
 

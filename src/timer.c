@@ -244,6 +244,7 @@ static inline void update_mode(struct psx_timer* tmr, uint32_t idx) {
 			}
 		}
 		break;
+	default: UNREACHABLE();
 	}
 
 	setcount(tmr, idx, 0);

@@ -7,27 +7,6 @@
 
 #define DUALSHOCK_ID(pad) ((pad->config_mode) ? 0xf3 : (pad->analog_mode) ? 0x73 : 0x41)
 
-static struct psx_pad pads[2] = { 
-	{
-		.dev = {
-			.id = PSX_SIO_DEV_CONTROLLER,
-			.send = pad_send,
-			.recv = pad_recv,
-			.reset = pad_reset,
-			.tx_finished = pad_tx_finished
-		}
-	},
-	{
-		.dev = {
-			.id = PSX_SIO_DEV_CONTROLLER,
-			.send = pad_send,
-			.recv = pad_recv,
-			.reset = pad_reset,
-			.tx_finished = pad_tx_finished 
-		 }
-	},
-};
-
 enum {
 	CMD_READ_BUTTONS = 'B',
 	CMD_CONFIG_MODE  = 'C',
@@ -36,16 +15,16 @@ enum {
 	CMD_RUMBLE_CTRL  = 'M',
 };
 
-struct sio_dev* pad_connect(int n, void* host_data, psx_padpollfn_t poll_host) {
-	n &= 1;
-	pads[n].host.data = host_data;
-	pads[n].host.poll = poll_host;
-	pads[n].config_mode = false;
-	pads[n].analog_mode = false;
-	pads[n].processing_command = false;
-	pads[n].session_active = false;
-	memset(&pads[n].resp, 0, sizeof(pads[n].resp));
-	return &pads[n].dev;
+void pad_connect(struct sio_dev* dev, void* host_data, psx_padpollfn_t poll_host) {
+	sio_dev_clear(dev);
+	struct psx_pad* pad = (struct psx_pad*)dev;
+	pad->host.data = host_data;
+	pad->host.poll = poll_host;
+	pad->dev = (struct sio_dev) {
+		.id = PSX_SIO_DEV_CONTROLLER,
+		.send = pad_send, .recv = pad_recv,
+		.reset = pad_reset, .tx_finished = pad_tx_finished
+	};
 }
 
 void pad_reset(struct sio_dev* dev) {

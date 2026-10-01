@@ -114,14 +114,23 @@ typedef struct psx_render_args {
 	};
 } psx_render_args_t;
 
+// Present Flags (for psx_renderer.update())
+enum {
+	PSX_RENDERER_PRF_24_BIT     = (1 << 0),  // 24-bit rendering (every 16-bit pixel is reinterpreted as a 24-bit rgb8 value)
+	PSX_RENDERER_PRF_INTERLACE  = (1 << 1),  // Interlaced Rendering
+	PSX_RENDERER_PRF_DISPLAY_EN = (1 << 2),  // Display Enable
+	PSX_RENDERER_PRF_ODD_FIELD  = (1 << 3),  // Odd field (when INTERLACE is enabled)
+};
+
 struct psx_renderer {
 	void* host_data;
 
 	void (*poly)(struct psx_renderer*, int shading_mode, struct psx_render_args*);
 	void (*rect)(struct psx_renderer*, bool is_textured, struct psx_render_args*);
 	void (*line)(struct psx_renderer*, bool is_gouraud,  struct psx_render_args*);
-	void (*update)(struct psx_renderer*, const psx_gpu_rect_t* rect, bool is_24bit, bool display_enable);
+	void (*update)(struct psx_renderer*, const psx_gpu_rect_t* rect, int flags);
 	void (*clip_update)(struct psx_renderer*, psx_gpu_vec2_t start, psx_gpu_vec2_t end);
+	void (*cache_clear)(struct psx_renderer*);
 	void (*blit)(struct psx_renderer*, psx_gpu_vec2_t src, psx_gpu_vec2_t dst, int w, int h);
 	uint16_t* (*get_vram)(struct psx_renderer*, const psx_gpu_rect_t* rect, bool is_read);
 	void (*commit_vram)(struct psx_renderer*, uint16_t* vram_rect);

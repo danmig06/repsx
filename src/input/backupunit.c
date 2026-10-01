@@ -9,24 +9,6 @@
 #define BU_SUCCESS 0x47
 #define BU_BAD_CHK 0x4e
 #define BU_BADSECT 0xff
-#define BU_INDEX(bu, bu_array) (((bu) - (bu_array)) / sizeof(*(bu)))
-
-static struct psx_bu backup_unit[2] = { 
-	{
-		.dev = {
-			.id = PSX_SIO_DEV_MEMCARD,
-			.send = bu_send, .recv = bu_recv,
-			.reset = bu_reset, .tx_finished = bu_tx_finished
-		}
-	},
-	{
-		.dev = {
-			.id = PSX_SIO_DEV_MEMCARD,
-			.send = bu_send, .recv = bu_recv,
-			.reset = bu_reset, .tx_finished = bu_tx_finished
-		}
-	}
-};
 
 enum {
 	CMD_READ_DATA  = 'R',
@@ -229,23 +211,22 @@ static void process_send(struct psx_bu* bu, uint8_t val) {
 	case CMD_GET_ID:
 		update_getid(bu, val);
 		break;
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 }
 
-struct sio_dev* bu_connect(int n, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
-	n &= 1;
-	backup_unit[n].host.data = host_data;
-	backup_unit[n].host.write_sector = write_fn;
-	backup_unit[n].host.read_sector = read_fn;
-	backup_unit[n].processing_command = false;
-	backup_unit[n].session_active = false;
-	backup_unit[n].current_command = 0;
-	backup_unit[n].command_state = 0;
-	memset(&backup_unit[n].sector, 0, sizeof(backup_unit[n].sector));
-	backup_unit[n].flag = FLG_DEFAULT;
-	return &backup_unit[n].dev;
+void bu_connect(struct sio_dev* dev, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn) {
+	sio_dev_clear(dev);
+	struct psx_bu* bu = (struct psx_bu*)dev;
+	bu->host.data = host_data;
+	bu->host.write_sector = write_fn;
+	bu->host.read_sector = read_fn;
+	bu->flag = FLG_DEFAULT;
+	bu->dev = (struct sio_dev) {
+		.id = PSX_SIO_DEV_MEMCARD,
+		.send = bu_send, .recv = bu_recv,
+		.reset = bu_reset, .tx_finished = bu_tx_finished
+	};
 }
 
 void bu_reset(struct sio_dev* dev) {
@@ -310,8 +291,7 @@ bool bu_tx_finished(struct sio_dev* dev) {
 		return bu->command_state == (BU_STATE_W_END + 1);
 	case CMD_GET_ID:
 		return bu->command_state == (BU_STATE_S_ID_END + 1);	
-	default:
-		break;
+	default: UNREACHABLE();
 	}
 	return !bu->session_active;
 }

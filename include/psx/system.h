@@ -76,7 +76,7 @@ struct psx_system* psx_system_alloc(void);
 bool psx_system_init(struct psx_system* sys, const char* bios_path);
 void psx_system_uninit(struct psx_system* sys);
 void psx_system_add_pad(struct psx_system* sys, int port, void* host_data, psx_padpollfn_t pollfn);
-void psx_system_remove_pad(struct psx_system* sys, int port);
+void psx_system_remove_dev(struct psx_system* sys, int port);
 void psx_system_add_mcd(struct psx_system* sys, int port, void* host_data, psx_buwritefn_t write_fn, psx_bureadfn_t read_fn);
 void psx_system_remove_mcd(struct psx_system* sys, int port);
 

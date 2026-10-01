@@ -31,7 +31,7 @@ static const uint32_t cop0_reg_write_mask_table[] = {
 	0xffffffff, // BPC
 	0x00000000, // r4
 	0xffffffff, // BDA
-	0x00000000, // JUMPDEST
+	0x00000000, // TAR
 	0xffc0f03f, // DCIC
 	0x00000000, // BadVaddr
 	0xffffffff, // BDAM
@@ -122,6 +122,7 @@ void enter_exception(struct psx_cpu* cpu, uint32_t exc) {
 		// set the BT flag
 		if(cpu->branch_taken) {
 			cpu->cop0_regs.cause |= CAUSE_BT;
+			cpu->cop0_regs.tar = cpu->next_pc;
 		} else {
 			cpu->cop0_regs.cause &= ~CAUSE_BT;
 		}
@@ -173,7 +174,7 @@ void sll(struct psx_cpu* cpu, uint32_t insn) {
 }
 
 void j(struct psx_cpu* cpu, uint32_t insn) {
-	cpu->branch = true;
+	cpu->branch = cpu->branch_taken = true;
 	disasm("j 0x%08x", ADDR(insn));
 	cpu->next_pc = (cpu->next_pc & 0xf0000000) | (ADDR(insn) << 2);
 }
@@ -239,7 +240,7 @@ void lw(struct psx_cpu* cpu, uint32_t insn) {
 
 void jr(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("jr $%u", S(insn));
-	cpu->branch = true;
+	cpu->branch = cpu->branch_taken = true;
 	cpu->next_pc = REG(S(insn));
 }
 
@@ -269,7 +270,7 @@ void sh(struct psx_cpu* cpu, uint32_t insn) {
 
 void jal(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("jal 0x%08x", ADDR(insn));
-	cpu->branch = true;
+	cpu->branch = cpu->branch_taken = true;
 	SET_REG(31, cpu->next_pc);
 	cpu->next_pc = (cpu->next_pc & 0xf0000000) | (ADDR(insn) << 2);
 }
@@ -376,7 +377,7 @@ void lbu(struct psx_cpu* cpu, uint32_t insn) {
 
 void jalr(struct psx_cpu* cpu, uint32_t insn) {
 	disasm("jalr $%u, $%u", D(insn), S(insn));
-	cpu->branch = true;
+	cpu->branch = cpu->branch_taken = true;
 	uint32_t s = REG(S(insn));
 	SET_REG(D(insn), cpu->next_pc);
 	cpu->next_pc = s;

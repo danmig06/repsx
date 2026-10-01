@@ -13,10 +13,8 @@
 		exit(1); \
 	} while(0)
 
-#define AS_UINT32(s) (*(uint32_t*)(&(s)))
-#define AS_UINT16(s) (*(uint16_t*)(&(s)))
-#define AS_UINT8(s) (*(uint8_t*)(&(s)))
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
+
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define ABS(n) (((n) >= 0) ? (n) : -(n))
@@ -26,6 +24,34 @@
 #define BIT_RANGE(s, n) ((BIT(n) - 1) << (s))
 #define SET_BITS(o, v, msk, s) o = (o & ~(msk)) | (((v) << (s)) & (msk))
 #define GET_BITS(o, msk, s) (((o) & (msk)) >> (s))
+
+#if defined(__GNUC__) || defined(__clang__)
+#define LZC(n) __builtin_clz(n)
+#elif defined(_MSC_VER)
+#include <intrin.h>
+#define LZC(n) __lzcnt(n)
+#else
+
+#define LZC(n) __fallback_clz(n)
+static inline int __fallback_clz(uint32_t n) {
+	int count = 0;
+	while(!(n & 1)) {
+		count++;
+		n >>= 1;
+	}
+	return count;
+}
+
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define UNREACHABLE() __builtin_unreachable()
+#elif defined(_MSC_VER)
+#define UNREACHABLE() __assume(0)
+#else
+#include <assert.h>
+#define UNREACHABLE() assert(0 && "unreachable code")
+#endif
 
 #endif // #ifndef PSX_UTIL_H
 

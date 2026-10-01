@@ -1,0 +1,67 @@
+Compatibility list (PAL Libcrypt bypasses are not supported yet):
+
+Ape Escape - Gets to the title screen, analog controller is not supported yet
+Battle Arena Toshinden - Playable
+Bloody Roar - Playable
+Bloody Roar 2 - Playable
+Castlevania Chronicles - Playable
+Castlevania Symphony of The Night - Playable
+Chrono Cross - Playable
+Crash Bandicoot - Playable
+Crash Bandicoot 2 Cortex Strikes Back - Playable
+Crash Bandicoot 3 Warped - Playable
+Crash Team Racing - Playable
+Dragon Ball GT Final Bout - Playable
+Dino Crisis - Playable
+Duke Nukem Total Meltdown - Playable
+Dead or Alive - Playable
+Doom - Playable
+Devil Summoner Soul Hackers - Playable
+Final Fantasy VII - Playable
+Final Fantasy VIII - Minor Issues: the intro FMV sets the screen start at a weird x position, causing incorrect 24-bit color parsing
+Final Fantasy IX - Cannot get to the title screen due to MDEC quirks, hacking past that, it works fine ingame
+Fromage (homebrew) - Doesn't boot (wants CdlSetsession)
+Gran Turismo - Playable
+Gran Turismo 2 - Playable
+Grand Theft Auto 2 - Playable
+Klonoa Door to Phantomile - Playable
+The Legend of Dragoon - Playable
+Legacy of Kain Soul Reaver - Playable
+MediEvil - Graphics crap out in some specific instances right after a loading screen (doesn't crash, same issue as PCSX-Redux)
+Metal Gear Solid - Playable (Frontend-side has noticeable OpenGL related artifacting)
+Mortal Kombat 2 - Playable
+MegaMan Legends - Playable
+MegaMan X4 - Playable
+Nightmare Creatures II - FMVs crash after some seconds (can be skipped), game is Playable
+Persona - Playable
+Persona 2 - Playable
+Puzzle Bobble - Playable
+Parasite Eve - Playable
+Parasite Eve II - Playable (might be requiring icache, needs a timer2 hack to boot successfully)
+PacMan World - Playable
+Ridge Racer Type 4 - Playable
+Racing Lagoon - Playable
+Rayman - Minor Issues: part of the FMV warps to the left (???)
+Rayman 2 The Great Escape - Playable
+Resident Evil - Playable
+Resident Evil 2 - Playable
+Resident Evil 3 Nemesis - Minor Issues: menu textures aren't fully loaded in when starting the game for some reason (???)
+Ridge Racer - Playable
+Serial Experiments Lain - Playable
+Street Fighter Alpha 3 - Playable
+Silent Hill - Playable (Frontend-side has severe OpenGL related artifacting)
+Shin Megami Tensei - Playable
+Spyro The Dragon - Playable
+Spyro 3 Year of The Dragon - Playable
+Tenchu Stealth Assassins - Playable
+Tekken - Playable
+Tekken 2 - Playable
+Tekken 3 - Playable
+Tokimeki Memorial ~ Forever With You - Playable
+Tomb Raider - Playable
+Vib Ribbon - Core gameplay works but disc swapping is still untested
+Valkyrie Profile - Minor Issues: battles occasionally freeze for a second or so, need to tweak DMA timing
+WipEout - Playable 
+Xenogears - Playable
+Yuuyami Doori Tankentai - Playable (Frontend-side has slight OpenGL related artifacting)
+Yume Nikki PS (homebrew) - Playable
